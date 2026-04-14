@@ -3,3 +3,4 @@
 .env.*
 node_modules/
 .vercel
+NEW-THREAD-CONTEXT.md
