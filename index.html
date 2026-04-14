@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>QA Bot — strona testowa</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="wrap" data-testid="page-root">
+      <header class="hero">
+        <p class="eyebrow">MVP / preview</p>
+        <h1 data-testid="hero-title">Witaj na stronie pod testy Playwright</h1>
+        <p class="lede">
+          Prosta strona statyczna do podpięcia pod Vercel i workflow na GitHub Actions.
+        </p>
+      </header>
+
+      <section class="card" aria-labelledby="status-heading">
+        <h2 id="status-heading" data-testid="section-status">Status</h2>
+        <p data-testid="status-text">Deploy preview jest gotowy do otwarcia w teście E2E.</p>
+        <button type="button" class="btn" data-testid="cta-primary">Główna akcja</button>
+      </section>
+
+      <footer class="foot">
+        <span data-testid="build-hint">Szukaj <code>preview</code> w URL z PR.</span>
+      </footer>
+    </main>
+  </body>
+</html>
