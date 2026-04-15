@@ -164,18 +164,34 @@ jobs:
             --arg content "$PROMPT" \
             '{model: $model, temperature: 0.4, messages: [{role: "user", content: $content}]}' > "$BODY_FILE"
 
-          RESP="$(curl -sS https://openrouter.ai/api/v1/chat/completions \
-            -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -H "HTTP-Referer: https://github.com/${GITHUB_REPOSITORY}" \
-            -H "X-Title: qa-bot-e2e" \
-            -d @"$BODY_FILE")"
+          RESP=""
+          attempt=1
+          while [ "$attempt" -le 4 ]; do
+            RESP="$(curl -sS https://openrouter.ai/api/v1/chat/completions \
+              -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -H "HTTP-Referer: https://github.com/${GITHUB_REPOSITORY}" \
+              -H "X-Title: qa-bot-e2e" \
+              -d @"$BODY_FILE")"
 
-          if printf '%s' "$RESP" | jq -e '.error' >/dev/null 2>&1; then
-            echo "OpenRouter API error:"
-            printf '%s\n' "$RESP" | jq -c . | head -c 4000
-            exit 1
-          fi
+            if printf '%s' "$RESP" | jq -e '.error' >/dev/null 2>&1; then
+              CODE="$(printf '%s' "$RESP" | jq -r '.error.code // empty')"
+              if { [ "$CODE" = "429" ] || [ "$CODE" = "503" ]; } && [ "$attempt" -lt 4 ]; then
+                echo "OpenRouter tymczasowo niedostępny (${CODE}), ponowna próba $((attempt + 1))/4 za 25 s…"
+                sleep 25
+                attempt=$((attempt + 1))
+                continue
+              fi
+              if [ "$CODE" = "429" ]; then
+                echo "OpenRouter rate limit po ponownych próbach — pomijam komentarz QA (E2E zostaje zielony)."
+                exit 0
+              fi
+              echo "OpenRouter API error:"
+              printf '%s\n' "$RESP" | jq -c . | head -c 4000
+              exit 1
+            fi
+            break
+          done
 
           CONTENT="$(printf '%s' "$RESP" | jq -r '.choices[0].message.content // empty')"
           if [ -z "$CONTENT" ]; then
