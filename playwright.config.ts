@@ -7,6 +7,10 @@ const baseURL =
     ? remoteBase.replace(/\/$/, '')
     : defaultLocalBase;
 
+/** Vercel Deployment Protection: nagłówki zgodnie z dokumentacją „Protection Bypass for Automation”. */
+const vercelAutomationBypass =
+  process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim() ?? '';
+
 export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
@@ -17,6 +21,14 @@ export default defineConfig({
   use: {
     baseURL,
     trace: 'on-first-retry',
+    ...(vercelAutomationBypass.length > 0
+      ? {
+          extraHTTPHeaders: {
+            'x-vercel-protection-bypass': vercelAutomationBypass,
+            'x-vercel-set-bypass-cookie': 'true',
+          },
+        }
+      : {}),
   },
   projects: [
     {
