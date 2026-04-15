@@ -103,6 +103,7 @@ jobs:
       - name: OpenRouter — komentarz QA na PR
         if: success() && github.event_name == 'deployment_status'
         env:
+          GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           BASE_URL: ${{ steps.base.outputs.url }}
           DEPLOY_SHA: ${{ github.event.deployment.sha }}
