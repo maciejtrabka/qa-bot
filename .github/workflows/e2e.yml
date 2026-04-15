@@ -9,6 +9,9 @@
 #
 # Uwaga: plik workflow musi być na domyślnej gałęzi (np. main), żeby GitHub mógł
 # uruchamiać ten workflow dla zdarzeń zewnętrznych (w tym deployment_status).
+#
+# Jeśli preview zwraca „Login – Vercel”: w Vercel włącz „Protection Bypass for Automation”,
+# skopiuj sekret do GitHub → Settings → Secrets → Actions jako VERCEL_AUTOMATION_BYPASS_SECRET.
 
 name: E2E
 
@@ -90,6 +93,7 @@ jobs:
         env:
           CI: true
           BASE_URL: ${{ steps.base.outputs.url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npm run test:e2e
 
       - name: Upload Playwright report
