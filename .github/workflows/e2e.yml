@@ -31,6 +31,7 @@ concurrency:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   playwright:
@@ -95,6 +96,103 @@ jobs:
           BASE_URL: ${{ steps.base.outputs.url }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: npm run test:e2e
+
+      # Jeden request do OpenRouter (klucz tylko w GitHub Secret OPENROUTER_API_KEY).
+      # Po sukcesie E2E na preview: krótka sugestia QA w komentarzu na PR (jeśli commit jest w PR).
+      # Prompt zawiera tytuł/opis PR oraz obcięty unified diff (bez wklejania sekretów do repo).
+      - name: OpenRouter — komentarz QA na PR
+        if: success() && github.event_name == 'deployment_status'
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          BASE_URL: ${{ steps.base.outputs.url }}
+          DEPLOY_SHA: ${{ github.event.deployment.sha }}
+          DEPLOY_ENV: ${{ github.event.deployment.environment }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "Brak sekretu OPENROUTER_API_KEY — pomijam LLM."
+            exit 0
+          fi
+
+          PR="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${DEPLOY_SHA}/pulls" -H "Accept: application/vnd.github+json" --jq '.[0].number // empty' || true)"
+          if [ -z "${PR}" ]; then
+            echo "Brak powiązanego PR dla tego commita — pomijam komentarz."
+            exit 0
+          fi
+
+          PR_TITLE="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq -r '.title // empty' 2>/dev/null || true)"
+          PR_BODY="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq -r '.body // empty' 2>/dev/null | head -c 12000 || true)"
+          DIFF_RAW="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" -H "Accept: application/vnd.github.v3.diff" 2>/dev/null | head -c 60000 || true)"
+
+          BODY_FILE="$(mktemp)"
+          COMMENT_FILE="$(mktemp)"
+          trap 'rm -f "$BODY_FILE" "$COMMENT_FILE"' EXIT
+
+          PROMPT="$(jq -n -r \
+            --arg url "$BASE_URL" \
+            --arg env "$DEPLOY_ENV" \
+            --arg sha "$DEPLOY_SHA" \
+            --arg title "$PR_TITLE" \
+            --arg body "$PR_BODY" \
+            --arg diff "$DIFF_RAW" \
+            '
+              [
+                "Playwright E2E zakończył się sukcesem dla tego preview.",
+                "",
+                "URL: " + $url,
+                "Środowisko deployu: " + $env,
+                "SHA: " + $sha,
+                "",
+                "## Pull request (kontekst zmian)",
+                "**Tytuł:** " + $title,
+                "",
+                "**Opis PR (może być obcięty):**",
+                $body,
+                "",
+                "**Unified diff (może być obcięty; pomoc do zrozumienia zakresu — w publicznym komentarzu nie cytuj surowego diffu ani wartości mogących być sekretami):**",
+                $diff,
+                "",
+                "Napisz po polsku krótki komentarz dla recenzenta PR (markdown): 3–6 punktów listy.",
+                "Priorytet: zasugeruj kontrole ręczne powiązane z widocznymi zmianami w diffie lub opisie (UI, a11y, copy, responsywność, edge cases).",
+                "Nie ograniczaj się do ogólników, jeśli diff coś sugeruje. Nie powtarzaj wprost, że automatyczne testy przeszły. Bez nagłówka „#”; zacznij od zdania wstępu w 1 linii, potem lista."
+              ] | join("\n")
+            ')"
+
+          jq -n \
+            --arg model "meta-llama/llama-3.3-70b-instruct:free" \
+            --arg content "$PROMPT" \
+            '{model: $model, temperature: 0.4, messages: [{role: "user", content: $content}]}' > "$BODY_FILE"
+
+          RESP="$(curl -sS https://openrouter.ai/api/v1/chat/completions \
+            -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -H "HTTP-Referer: https://github.com/${GITHUB_REPOSITORY}" \
+            -H "X-Title: qa-bot-e2e" \
+            -d @"$BODY_FILE")"
+
+          if printf '%s' "$RESP" | jq -e '.error' >/dev/null 2>&1; then
+            echo "OpenRouter API error:"
+            printf '%s\n' "$RESP" | jq -c . | head -c 4000
+            exit 1
+          fi
+
+          CONTENT="$(printf '%s' "$RESP" | jq -r '.choices[0].message.content // empty')"
+          if [ -z "$CONTENT" ]; then
+            echo "OpenRouter zwrócił pustą treść lub błąd:"
+            printf '%s\n' "$RESP" | head -c 2000
+            exit 1
+          fi
+
+          {
+            echo "### Podpowiedź QA (OpenRouter, auto)"
+            echo ""
+            echo "$CONTENT"
+            echo ""
+            echo "<sub>Model: \`meta-llama/llama-3.3-70b-instruct:free\` · wygenerowane w workflow E2E po zielonym Playwright · prompt z tytułem/opisem/obciętym diffem PR.</sub>"
+          } > "$COMMENT_FILE"
+
+          gh pr comment "$PR" --repo "${GITHUB_REPOSITORY}" --body-file "$COMMENT_FILE"
+          echo "Dodano komentarz na PR #${PR}."
 
       - name: Upload Playwright report
         if: failure()
