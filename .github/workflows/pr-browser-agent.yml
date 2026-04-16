@@ -1,5 +1,5 @@
-# PR-only: Stagehand (LOCAL) + OpenRouter exploratory click, then hard DOM check
-# for "Hello world" under the primary button. Does not run on push to main without a PR.
+# PR-only: Stagehand (LOCAL) + OpenRouter — QA wg prompta (plik lub zmienna), werdykt w extract.
+# Nie uruchamia się na push do main bez PR.
 
 name: PR browser agent
 
@@ -7,9 +7,14 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
-  # Ręczne uruchomienie z Actions — tworzy ten sam check `pr_browser_agent`, żeby pojawił się
-  # na liście „Required status checks” (GitHub szuka checków z ostatniego tygodnia).
+  # Ręczne uruchomienie z Actions — ten sam check `pr_browser_agent` (branch protection).
   workflow_dispatch:
+    inputs:
+      prompt_file:
+        description: "Ścieżka do pliku z promptem QA (względem root repo)"
+        type: string
+        required: false
+        default: pr-agent-qa-prompt.md
 
 permissions:
   contents: read
@@ -41,6 +46,20 @@ jobs:
       - name: Install Playwright Chromium (Stagehand LOCAL)
         run: npx playwright install --with-deps chromium
 
+      - name: Materialize PR context for agent
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p pr-context
+          NUM="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          gh pr view "$NUM" --repo "$REPO" --json title,body \
+            --jq '{title: (.title // ""), body: (.body // "")}' > pr-context/pr.json
+          gh pr diff "$NUM" --repo "$REPO" --name-only 2>/dev/null | head -n 500 > pr-context/files.txt || true
+          ( gh pr diff "$NUM" --repo "$REPO" --patch 2>/dev/null || true ) | head -c 120000 > pr-context/diff.patch
+
       - name: Start static server
         run: |
           npx serve . -l 9333 &
@@ -62,6 +81,10 @@ jobs:
           OPENROUTER_HTTP_REFERER: https://github.com/${{ github.repository }}
           STAGEHAND_MODEL: ${{ vars.STAGEHAND_MODEL }}
           PR_AGENT_FAILURE_LOG: pr-agent-failure.txt
+          PR_AGENT_CONTEXT_DIR: pr-context
+          # Puste = użyj pliku PR_AGENT_PROMPT_FILE. Możesz wkleić prompt w Repo → Settings → Variables → PR_AGENT_QA_PROMPT
+          PR_AGENT_PROMPT: ${{ vars.PR_AGENT_QA_PROMPT }}
+          PR_AGENT_PROMPT_FILE: ${{ github.event_name == 'workflow_dispatch' && inputs.prompt_file || 'pr-agent-qa-prompt.md' }}
         run: npm run agent:pr-browser 2>&1 | tee pr-agent.log
 
       - name: Upload logs on failure
@@ -85,7 +108,7 @@ jobs:
           {
             echo "### Agent PR gate — niepowodzenie"
             echo ""
-            echo "Workflow **PR browser agent** wykrył problem: przycisk dodający „Hello world” pod spodem nie działa zgodnie z oczekiwaniem albo agent LLM + twarda weryfikacja DOM zakończyły się błędem."
+            echo "Workflow **PR browser agent** zakończył się niepowodzeniem: agent (Stagehand + LLM) nie uznał QA za zaliczone wg prompta albo wystąpił błąd uruchomienia."
             echo ""
             echo "#### Ostatnie linie logu"
             echo '```text'

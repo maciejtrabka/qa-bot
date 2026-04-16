@@ -1,6 +1,6 @@
 # qa-bot
 
-Statyczna strona testowa i workflow **PR browser agent**: przy PR do `main` uruchamiany jest **Stagehand** (LOCAL) + **OpenRouter**, a potem twarda weryfikacja, czy przycisk dodaje **Hello world** pod spodem.
+Statyczna strona testowa i workflow **PR browser agent**: przy PR do `main` CI zapisuje kontekst PR w `pr-context/`, a agent **Stagehand** + **OpenRouter** wykonuje QA wg **[`pr-agent-qa-prompt.md`](pr-agent-qa-prompt.md)** (albo prompt ze zmiennej **`PR_AGENT_QA_PROMPT`** w GitHub). Wynik zaliczenia to **werdykt LLM** (`qaPassed` w `extract`), nie osobny test Playwright w kodzie agenta.
 
 ## Szybki start (lokalnie)
 

@@ -2,9 +2,15 @@
 
 ## Cel
 
-Przy **pull requeście do `main`** workflow **„PR browser agent”** uruchamia agenta **Stagehand** w trybie **LOCAL** (Chromium na runnerze GitHub Actions) z modelem przez **OpenRouter**. Agent wykonuje krótką **eksplorację** przycisku opisanego jako dodawanie tekstu „Hello world” pod przyciskiem, a potem **twarda weryfikacja DOM** sprawdza, czy po kliknięciu w `[data-testid="cta-primary"]` w `[data-testid="hello-output"]` faktycznie pojawia się **Hello world**.
+Przy **pull requeście do `main`** workflow **„PR browser agent”** zapisuje kontekst PR do **`pr-context/`**, potem uruchamia **Stagehand** (LOCAL) + **OpenRouter**. **Co dokładnie testować** definiujesz **promptem**:
 
-Jeśli coś jest nie tak (np. zepsuty handler w PR), job kończy się **niepowodzeniem** — możesz wymusić **blokadę merge** przez branch protection — oraz workflow dodaje **komentarz na PR** z fragmentem logu.
+- domyślnie plik **[`pr-agent-qa-prompt.md`](../pr-agent-qa-prompt.md)** w root repozytorium (wersjonowany razem z kodem), albo
+- zmienna repozytorium **`PR_AGENT_QA_PROMPT`** (treść trafia do env `PR_AGENT_PROMPT` i **nadpisuje** plik), albo
+- przy **`workflow_dispatch`**: pole **prompt_file** (ścieżka do innego pliku markdown z promptem).
+
+Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR). Krok **`extract`** zwraca strukturalny werdykt **`qaPassed`** — jeśli model ustawi `false` (albo wystąpi błąd), job **fail** → możliwa **blokada merge** + **komentarz na PR** z logiem.
+
+**Uwaga:** bramka opiera się na **ocenie LLM**, nie na osobnym skrypcie Playwright z twardymi selektorami. Możesz dopisać w promptcie konkretne selektory / kroki, żeby model był bardziej deterministyczny.
 
 ## Pliki w repo
 
@@ -13,6 +19,8 @@ Jeśli coś jest nie tak (np. zepsuty handler w PR), job kończy się **niepowod
 | Strona + przycisk | [`index.html`](../index.html) |
 | Agent (LLM + DOM) | [`scripts/pr-browser-agent.ts`](../scripts/pr-browser-agent.ts) |
 | Workflow | [`.github/workflows/pr-browser-agent.yml`](../.github/workflows/pr-browser-agent.yml) |
+| Kontekst PR (generowany na CI) | `pr-context/pr.json`, `pr-context/files.txt`, `pr-context/diff.patch` |
+| Prompt QA (commitowany) | [`pr-agent-qa-prompt.md`](../pr-agent-qa-prompt.md) |
 
 ## Sekrety i zmienne
 
@@ -20,6 +28,7 @@ Jeśli coś jest nie tak (np. zepsuty handler w PR), job kończy się **niepowod
 | ----- | ----- | ----- |
 | `OPENROUTER_API_KEY` | GitHub → Settings → Secrets and variables → Actions | Wymagane do wywołań LLM (Stagehand). |
 | `STAGEHAND_MODEL` | (Opcjonalnie) Actions **Variables** | Pełny slug modelu, np. `openai/meta-llama/llama-3.3-70b-instruct:free`. Puste = domyślny model w skrypcie. |
+| `PR_AGENT_QA_PROMPT` | (Opcjonalnie) Actions **Variables** | Pełny tekst prompta QA — jeśli ustawiony, **zastępuje** plik `pr-agent-qa-prompt.md`. |
 
 **PR z forka** zwykle **nie** dostaje sekretów — MVP zakłada PR-y **z tego samego repozytorium**.
 
@@ -62,7 +71,8 @@ export $(grep -v '^#' .env | xargs)   # albo ręcznie export OPENROUTER_API_KEY=
 npm run agent:pr-browser
 ```
 
-`BASE_URL` domyślnie to `http://127.0.0.1:9333`.
+`BASE_URL` domyślnie to `http://127.0.0.1:9333`.  
+Opcjonalnie lokalnie: `PR_AGENT_PROMPT_FILE=inny-plik.md` albo `PR_AGENT_PROMPT='...'` (nadpisuje plik).
 
 ## Uwagi
 

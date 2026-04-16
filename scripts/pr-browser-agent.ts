@@ -1,10 +1,11 @@
 /**
- * PR browser agent: Stagehand (LOCAL) + OpenRouter, then hard DOM verification
- * that the primary button appends "Hello world" under [data-testid="hello-output"].
+ * PR browser agent: Stagehand (LOCAL) + OpenRouter. Optional PR context (pr-context/).
+ * QA steps and pass/fail criteria come from a prompt file or PR_AGENT_PROMPT env.
+ * Merge gate: structured extract — qaPassed must be true.
  */
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Stagehand } from "@browserbasehq/stagehand";
-import type { Page } from "playwright-core";
 import { z } from "zod";
 
 const BASE_URL = (process.env.BASE_URL ?? "http://127.0.0.1:9333").replace(
@@ -18,30 +19,145 @@ const modelName =
 
 const failureLogPath = process.env.PR_AGENT_FAILURE_LOG ?? "pr-agent-failure.txt";
 
-async function hardVerifyHelloAfterClick(page: Page) {
-  const btn = page.locator('[data-testid="cta-primary"]');
-  await btn.waitFor({ state: "visible", timeout: 20_000 });
-  if (!(await btn.isEnabled())) {
-    throw new Error("Primary button is visible but not enabled.");
+const contextDir = (process.env.PR_AGENT_CONTEXT_DIR ?? "pr-context").replace(
+  /\/$/,
+  ""
+);
+
+const promptFile =
+  process.env.PR_AGENT_PROMPT_FILE?.trim() || "pr-agent-qa-prompt.md";
+
+const MAX_INLINE_PROMPT = 48_000;
+const MAX_ACT_PROMPT = 95_000;
+
+type PrContextMaterial = {
+  title: string;
+  body: string;
+  changedFiles: string;
+  diffPatch: string;
+};
+
+function loadPrContext(): PrContextMaterial | null {
+  const prJsonPath = join(contextDir, "pr.json");
+  if (!existsSync(prJsonPath)) {
+    return null;
   }
 
-  let text = await page.locator('[data-testid="hello-output"]').innerText();
-  if (!text.includes("Hello world")) {
-    await btn.click();
-    await page
-      .locator('[data-testid="hello-output"]')
-      .getByText("Hello world", { exact: false })
-      .first()
-      .waitFor({ state: "visible", timeout: 10_000 })
-      .catch(() => undefined);
-    text = await page.locator('[data-testid="hello-output"]').innerText();
+  let title = "";
+  let body = "";
+  try {
+    const raw = readFileSync(prJsonPath, "utf8");
+    const parsed = JSON.parse(raw) as { title?: unknown; body?: unknown };
+    title = typeof parsed.title === "string" ? parsed.title : "";
+    body = typeof parsed.body === "string" ? parsed.body : "";
+  } catch (e) {
+    console.warn("pr-context/pr.json parse failed:", e);
+    return null;
   }
 
-  if (!text.includes("Hello world")) {
+  const filesPath = join(contextDir, "files.txt");
+  let changedFiles = "";
+  if (existsSync(filesPath)) {
+    changedFiles = readFileSync(filesPath, "utf8").trim();
+    if (changedFiles.length > 8000) {
+      changedFiles = `${changedFiles.slice(0, 8000)}\n\n[… files list truncated …]`;
+    }
+  }
+
+  const diffPath = join(contextDir, "diff.patch");
+  let diffPatch = "";
+  if (existsSync(diffPath)) {
+    diffPatch = readFileSync(diffPath, "utf8");
+    const maxDiff = 28_000;
+    if (diffPatch.length > maxDiff) {
+      diffPatch = `${diffPatch.slice(0, maxDiff)}\n\n[… diff truncated for prompt size …]`;
+    }
+  }
+
+  const maxBody = 6000;
+  if (body.length > maxBody) {
+    body = `${body.slice(0, maxBody)}\n\n[… PR body truncated …]`;
+  }
+
+  return { title, body, changedFiles, diffPatch };
+}
+
+function formatPrContextForPrompt(ctx: PrContextMaterial | null): string {
+  if (!ctx) {
+    return [
+      "PR context: none (no pr-context/pr.json — e.g. local run or workflow_dispatch).",
+      "Do general exploratory QA on this page only.",
+    ].join("\n");
+  }
+
+  const diffFence =
+    ctx.diffPatch.length > 0 ? ctx.diffPatch : "(no diff text)";
+
+  return [
+    "## Pull request context (author intent + scope)",
+    "",
+    `**Title:** ${ctx.title || "(empty)"}`,
+    "",
+    "**Description:**",
+    ctx.body || "(empty)",
+    "",
+    "**Changed files (paths):**",
+    ctx.changedFiles || "(none listed)",
+    "",
+    "**Patch (truncated):**",
+    "```diff",
+    diffFence,
+    "```",
+  ].join("\n");
+}
+
+function loadQaPrompt(): string {
+  const fromEnv = process.env.PR_AGENT_PROMPT?.trim();
+  if (fromEnv) {
+    const s =
+      fromEnv.length > MAX_INLINE_PROMPT
+        ? `${fromEnv.slice(0, MAX_INLINE_PROMPT)}\n\n[… PR_AGENT_PROMPT truncated …]`
+        : fromEnv;
+    console.log("QA prompt: from PR_AGENT_PROMPT env", `(${s.length} chars)`);
+    return s;
+  }
+
+  if (!existsSync(promptFile)) {
     throw new Error(
-      'Expected "Hello world" under [data-testid="hello-output"] after clicking the primary button — action appears broken.'
+      `Missing QA prompt: set PR_AGENT_PROMPT or add file "${promptFile}" (see pr-agent-qa-prompt.md in repo).`
     );
   }
+
+  let text = readFileSync(promptFile, "utf8").trim();
+  if (!text) {
+    throw new Error(`QA prompt file "${promptFile}" is empty.`);
+  }
+  if (text.length > MAX_INLINE_PROMPT) {
+    text = `${text.slice(0, MAX_INLINE_PROMPT)}\n\n[… prompt file truncated …]`;
+  }
+  console.log("QA prompt: from file", promptFile, `(${text.length} chars)`);
+  return text;
+}
+
+function buildActInstruction(
+  prCtxBlock: string,
+  qaPrompt: string,
+  origin: string
+): string {
+  const core = [
+    prCtxBlock,
+    "",
+    "## QA instructions (your task — follow carefully)",
+    "",
+    qaPrompt,
+    "",
+    `**Scope:** only the app under **${origin}**. Do not navigate away from this origin. Use a single tab.`,
+  ].join("\n");
+
+  if (core.length > MAX_ACT_PROMPT) {
+    return `${core.slice(0, MAX_ACT_PROMPT)}\n\n[… act instruction truncated …]`;
+  }
+  return core;
 }
 
 async function main() {
@@ -80,44 +196,68 @@ async function main() {
     },
   });
 
+  const verdictSchema = z.object({
+    qaPassed: z
+      .boolean()
+      .describe(
+        "true only if every blocking criterion from the QA instructions is satisfied"
+      ),
+    whatYouChecked: z.string(),
+    blockingFindings: z.array(z.string()).optional(),
+    notes: z.string().optional(),
+  });
+
   try {
+    const qaPrompt = loadQaPrompt();
     await stagehand.init();
     const page = stagehand.context.pages()[0];
+    const prCtx = loadPrContext();
+    const prCtxBlock = formatPrContextForPrompt(prCtx);
+    if (prCtx) {
+      console.log("PR context loaded:", {
+        title: prCtx.title,
+        filesChars: prCtx.changedFiles.length,
+        diffChars: prCtx.diffPatch.length,
+      });
+    } else {
+      console.log("PR context not found; running without PR metadata.");
+    }
+
+    const origin = new URL(`${BASE_URL}/`).origin;
+
     await page.goto(`${BASE_URL}/`, {
       waitUntil: "domcontentloaded",
       timeoutMs: 30_000,
     });
 
-    await stagehand.act(
-      "Exploratory QA only on this page: find the button whose label mentions adding Hello world below the button. Click it once as a real user would, then stop. Do not leave this page."
+    const actText = buildActInstruction(prCtxBlock, qaPrompt, origin);
+    await stagehand.act(actText);
+
+    const verdict = await stagehand.extract(
+      [
+        formatPrContextForPrompt(prCtx),
+        "",
+        "## QA instructions (same as for actions)",
+        qaPrompt,
+        "",
+        "Based only on the current page state after your exploration: did the QA instructions pass?",
+        'Respond with qaPassed (boolean), whatYouChecked (short), optional blockingFindings (strings), optional notes.',
+      ].join("\n"),
+      verdictSchema
     );
 
-    const observationSchema = z.object({
-      sawButton: z.boolean(),
-      clicked: z.boolean(),
-      helloVisibleAfterExploration: z.boolean(),
-      notes: z.string(),
-    });
+    console.log("LLM verdict:", JSON.stringify(verdict, null, 2));
 
-    let obs: z.infer<typeof observationSchema>;
-    try {
-      obs = await stagehand.extract(
-        "Based on the current page: did you see the primary action button about Hello world? Did you click it? Is the text Hello world visible below that button? One short sentence in notes.",
-        observationSchema
+    if (!verdict.qaPassed) {
+      const findings = verdict.blockingFindings?.length
+        ? verdict.blockingFindings.join("\n- ")
+        : "(none listed)";
+      throw new Error(
+        `QA gate failed (model verdict: qaPassed=false).\nWhat was checked: ${verdict.whatYouChecked}\nBlocking findings:\n- ${findings}\nNotes: ${verdict.notes ?? ""}`
       );
-    } catch (e) {
-      console.warn("extract() failed (non-fatal):", e);
-      obs = {
-        sawButton: false,
-        clicked: false,
-        helloVisibleAfterExploration: false,
-        notes: "extract failed",
-      };
     }
-    console.log("LLM extraction summary:", JSON.stringify(obs, null, 2));
 
-    await hardVerifyHelloAfterClick(page as unknown as Page);
-    console.log("PR browser agent: hard DOM gate passed.");
+    console.log("PR browser agent: QA gate passed (model verdict).");
   } catch (e) {
     const detail =
       e instanceof Error ? `${e.message}\n\n${e.stack ?? ""}` : String(e);
