@@ -56,12 +56,6 @@ h1 {
   letter-spacing: -0.02em;
 }
 
-.lede {
-  margin: 0;
-  color: var(--muted);
-  font-size: 1.05rem;
-}
-
 .card {
   background: var(--card);
   border: 1px solid color-mix(in srgb, var(--fg) 12%, transparent);
@@ -73,6 +67,10 @@ h1 {
 .card h2 {
   margin: 0 0 0.5rem;
   font-size: 1.1rem;
+}
+
+.card h2 + .btn {
+  margin-top: 0.75rem;
 }
 
 .card p {

@@ -97,6 +97,7 @@ jobs:
           path: |
             pr-agent.log
             pr-agent-failure.txt
+            pr-agent-pr-comment.md
           retention-days: 7
 
       - name: Comment on PR when agent failed
@@ -105,25 +106,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          BODY_FILE="$(mktemp)"
-          trap 'rm -f "$BODY_FILE"' EXIT
-          {
-            echo "### Agent PR gate — niepowodzenie"
-            echo ""
-            echo "Workflow **PR browser agent** zakończył się niepowodzeniem: agent (Stagehand + LLM) nie uznał QA za zaliczone wg prompta albo wystąpił błąd uruchomienia."
-            echo ""
-            echo "#### Ostatnie linie logu"
-            echo '```text'
-            tail -n 120 pr-agent.log 2>/dev/null || echo "(brak pr-agent.log)"
-            echo '```'
-            echo ""
-            if [ -f pr-agent-failure.txt ]; then
-              echo "#### Szczegóły (pr-agent-failure.txt)"
-              echo '```text'
-              head -c 8000 pr-agent-failure.txt
-              echo '```'
-            fi
-            echo ""
-            echo "<sub>Check do branch protection: job name \`pr_browser_agent\` (workflow: PR browser agent).</sub>"
-          } > "$BODY_FILE"
-          gh pr comment "${{ github.event.pull_request.number }}" --body-file "$BODY_FILE" --repo "${{ github.repository }}"
+          if [ ! -f pr-agent-pr-comment.md ]; then
+            printf '%s\n' \
+              "### Agent PR gate — niepowodzenie" \
+              "" \
+              "Brak pliku \`pr-agent-pr-comment.md\` — zajrzyj do artefaktu **pr-agent-logs** w tym runie." \
+              "" \
+              "<sub>Check: \`pr_browser_agent\` (workflow *PR browser agent*).</sub>" \
+              > pr-agent-pr-comment.md
+          fi
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file pr-agent-pr-comment.md --repo "${{ github.repository }}"
