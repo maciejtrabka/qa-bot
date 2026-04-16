@@ -10,3 +10,6 @@ pr-agent-pr-comment.md
 pr-context/
 test-results/
 AGENTS.md
+
+# Cursor (lokalne skille / reguły — nie wersjonujemy jak kodu produktu)
+.cursor/
