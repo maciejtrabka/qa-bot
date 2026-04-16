@@ -9,27 +9,46 @@
   <body>
     <main class="wrap" data-testid="page-root">
       <header class="hero">
-        <p class="eyebrow">MVP / preview</p>
-        <h1 data-testid="hero-title">Witaj na stronie pod testy Playwright</h1>
+        <p class="eyebrow">MVP / PR</p>
+        <h1 data-testid="hero-title">Strona pod agenta PR (LLM + przeglądarka)</h1>
         <p class="lede">
-          Prosta strona statyczna do podpięcia pod Vercel i workflow na GitHub Actions. Po merge: E2E
-          na preview i podpowiedź QA z kontekstu PR (tytuł, opis, fragment diffu).
+          Statyczna strona serwowana lokalnie w CI. Przy pull requeście do <code>main</code> agent
+          klika przycisk i sprawdza, czy pojawia się tekst „Hello world” pod przyciskiem.
         </p>
       </header>
 
       <section class="card" aria-labelledby="status-heading">
-        <h2 id="status-heading" data-testid="section-status">Status</h2>
-        <p data-testid="status-text">Deploy preview jest gotowy do otwarcia w teście E2E.</p>
-        <button type="button" class="btn" data-testid="cta-primary">Główna akcja</button>
+        <h2 id="status-heading" data-testid="section-status">Interakcja</h2>
+        <p data-testid="status-text">
+          Kliknij przycisk — każde kliknięcie dodaje linię „Hello world” poniżej.
+        </p>
+        <button type="button" class="btn" data-testid="cta-primary">
+          Add text Hello world below button
+        </button>
+        <div
+          class="hello-output"
+          data-testid="hello-output"
+          id="hello-output"
+          aria-live="polite"
+        ></div>
       </section>
 
       <footer class="foot">
-        <span data-testid="build-hint">Szukaj <code>preview</code> w URL z PR.</span>
+        <span data-testid="build-hint">Workflow uruchamia się tylko na PR do <code>main</code>.</span>
       </footer>
     </main>
+    <script>
+      (function () {
+        var btn = document.querySelector('[data-testid="cta-primary"]');
+        var out = document.querySelector('[data-testid="hello-output"]');
+        if (!btn || !out) return;
+        btn.addEventListener('click', function () {
+          var p = document.createElement('p');
+          p.className = 'hello-line';
+          p.textContent = 'Hello world';
+          out.appendChild(p);
+        });
+      })();
+    </script>
   </body>
 </html>
-
-<!-- CI: trigger Vercel preview for deployment_status E2E -->
-
-<!-- trigger: E2E deployment_status + bypass verify -->

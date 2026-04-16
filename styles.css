@@ -100,6 +100,19 @@ h1 {
   transform: translateY(1px);
 }
 
+.hello-output {
+  margin-top: 1.25rem;
+  min-height: 1.5rem;
+  padding: 0.75rem 0 0;
+  border-top: 1px dashed color-mix(in srgb, var(--fg) 18%, transparent);
+}
+
+.hello-line {
+  margin: 0.35rem 0 0;
+  font-size: 0.95rem;
+  color: var(--fg);
+}
+
 .foot {
   margin-top: 2rem;
   font-size: 0.9rem;

@@ -6,5 +6,7 @@ node_modules/
 /test-results/
 /blob-report/
 .vercel
+pr-agent.log
+pr-agent-failure.txt
 NEW-THREAD-CONTEXT.md
 AGENTS.md
