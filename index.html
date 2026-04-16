@@ -13,11 +13,6 @@
         <h1 data-testid="hero-title">
           Strona pod agenta PR (LLM + przeglądarka)
         </h1>
-        <p class="lede">
-          Statyczna strona serwowana lokalnie w CI. Przy pull requeście do
-          <code>main</code> agent klika przycisk i sprawdza, czy pojawia się
-          tekst „Hello world” pod przyciskiem.
-        </p>
       </header>
 
       <section class="card" aria-labelledby="status-heading">
@@ -51,7 +46,7 @@
         btn.addEventListener("click", function () {
           var p = document.createElement("p");
           p.className = "hello-line";
-          p.textContent = "Hello world";
+          p.textContent = "";
           out.appendChild(p);
         });
       })();

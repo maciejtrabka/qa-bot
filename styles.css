@@ -88,8 +88,8 @@ h1 {
   font-weight: 600;
   font-size: 0.95rem;
   cursor: pointer;
-  background: var(--accent);
-  color: #fff;
+  background: #facc15;
+  color: #111827;
 }
 
 .btn:hover {
