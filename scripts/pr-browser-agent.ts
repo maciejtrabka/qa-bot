@@ -257,8 +257,8 @@ async function main() {
         "true only if every blocking criterion from the QA instructions is satisfied"
       ),
     whatYouChecked: z.string(),
-    blockingFindings: z.array(z.string()).optional(),
-    notes: z.string().optional(),
+    blockingFindings: z.array(z.string()).nullish(),
+    notes: z.string().nullish(),
   });
 
   try {
