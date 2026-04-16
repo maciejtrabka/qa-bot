@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pl">
   <head>
     <meta charset="utf-8" />
@@ -10,17 +10,21 @@
     <main class="wrap" data-testid="page-root">
       <header class="hero">
         <p class="eyebrow">MVP / PR</p>
-        <h1 data-testid="hero-title">Strona pod agenta PR (LLM + przeglądarka)</h1>
+        <h1 data-testid="hero-title">
+          Strona pod agenta PR (LLM + przeglądarka)
+        </h1>
         <p class="lede">
-          Statyczna strona serwowana lokalnie w CI. Przy pull requeście do <code>main</code> agent
-          klika przycisk i sprawdza, czy pojawia się tekst „Hello world” pod przyciskiem.
+          Statyczna strona serwowana lokalnie w CI. Przy pull requeście do
+          <code>main</code> agent klika przycisk i sprawdza, czy pojawia się
+          tekst „Hello world” pod przyciskiem.
         </p>
       </header>
 
       <section class="card" aria-labelledby="status-heading">
         <h2 id="status-heading" data-testid="section-status">Interakcja</h2>
         <p data-testid="status-text">
-          Kliknij przycisk — każde kliknięcie dodaje linię „Hello world” poniżej.
+          Kliknij przycisk — każde kliknięcie dodaje linię „Hello world”
+          poniżej.
         </p>
         <button type="button" class="btn" data-testid="cta-primary">
           Add text Hello world below button
@@ -34,7 +38,9 @@
       </section>
 
       <footer class="foot">
-        <span data-testid="build-hint">Workflow uruchamia się tylko na PR do <code>main</code>.</span>
+        <span data-testid="build-hint"
+          >Workflow uruchamia się tylko na PR do <code>main</code>.</span
+        >
       </footer>
     </main>
     <script>
@@ -42,10 +48,10 @@
         var btn = document.querySelector('[data-testid="cta-primary"]');
         var out = document.querySelector('[data-testid="hello-output"]');
         if (!btn || !out) return;
-        btn.addEventListener('click', function () {
-          var p = document.createElement('p');
-          p.className = 'hello-line';
-          p.textContent = 'Hello world';
+        btn.addEventListener("click", function () {
+          var p = document.createElement("p");
+          p.className = "hello-line";
+          p.textContent = "Hello world";
           out.appendChild(p);
         });
       })();
