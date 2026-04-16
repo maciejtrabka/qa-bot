@@ -55,9 +55,9 @@ Plik workflow w repo jest poprawny — kluczowe jest **mieć go już na `main`**
 
 1. **Opis PR:** napisz np. że zmieniasz kolor przycisku (żeby recenzent widział intencję kosmetyczną).
 2. W **CSS** (np. [`styles.css`](../styles.css)) zmień `--accent` lub tło `.btn` — wyraźna zmiana wizualna.
-3. W **JS w `index.html`** zepsij handler `click` tak, żeby **nie** dodawał już `Hello world` do `[data-testid="hello-output"]` (np. pusty handler, zły selektor, `preventDefault` bez logiki).
+3. W **JS w `index.html`** zostaw handler działający (nadal dodaje akapit do `[data-testid="hello-output"]`), ale zmień **`p.textContent`** z `'Hello world'` na **losowy ciąg znaków** bez tej frazy, np. `'asdasdansidufwe'`. To symuluje regresję treści bez „wyzerowania” UI — coś się pojawia, ale **nie** jest to oczekiwany tekst.
 
-Oczekiwany efekt: job **`pr_browser_agent`** → **failure** + komentarz na PR.
+Oczekiwany efekt: job **`pr_browser_agent`** → **failure** + komentarz na PR (prompt QA wymaga widocznego **Hello world**).
 
 ## Lokalnie
 
