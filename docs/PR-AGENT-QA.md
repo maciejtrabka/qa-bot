@@ -59,7 +59,7 @@ Plik workflow w repo jest poprawny — kluczowe jest **mieć go już na `main`**
 2. W **CSS** (np. [`styles.css`](../styles.css)) zmień `--accent` lub tło `.btn` — wyraźna zmiana wizualna.
 3. W **JS w `index.html`** zostaw handler działający (nadal dodaje akapit do `[data-testid="hello-output"]`), ale zmień **`p.textContent`** z `'Hello world'` na **losowy ciąg znaków** bez tej frazy, np. `'asdasdansidufwe'`. To symuluje regresję treści bez „wyzerowania” UI — coś się pojawia, ale **nie** jest to oczekiwany tekst.
 
-Oczekiwany efekt: job **`pr_browser_agent`** → **failure** + komentarz na PR (prompt QA wymaga widocznego **Hello world**).
+Oczekiwany efekt: job **`pr_browser_agent`** → zwykle **failure** + komentarz na PR, gdy model z diffa i UI uzna regresję (np. zamiast sensownego **Hello world** widać losowy ciąg). Przy bardzo ogólnym prompcie werdykt może być mniej przewidywalny — wtedy doprecyzuj prompt albo użyj **`PR_AGENT_QA_PROMPT`** ze sztywniejszymi krokami.
 
 ## Lokalnie
 
