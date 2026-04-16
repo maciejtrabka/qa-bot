@@ -2,6 +2,8 @@
 
 ## Cel
 
+**Bramka `pr_browser_agent` dotyczy pull requestów do `main`** (tam agent testuje zmiany i może zablokować merge). Iteracja nad samym workflow / promptem / skryptem agenta bywa **commitowana bezpośrednio na `main`** bez tej samej blokady — intencja MVP i polityka: lokalny **`AGENTS.md`** (gitignored) oraz skrót w **[`README.md`](../README.md)**.
+
 Przy **pull requeście do `main`** workflow **„PR browser agent”** zapisuje kontekst PR do **`pr-context/`**, potem uruchamia **Stagehand** (LOCAL) + **OpenRouter**. **Co dokładnie testować** definiujesz **promptem**:
 
 - domyślnie plik **[`pr-agent-qa-prompt.md`](../pr-agent-qa-prompt.md)** w root repozytorium (wersjonowany razem z kodem), albo
