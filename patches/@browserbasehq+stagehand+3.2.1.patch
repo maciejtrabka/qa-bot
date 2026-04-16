@@ -1,8 +1,8 @@
 diff --git a/node_modules/@browserbasehq/stagehand/dist/cjs/lib/v3/llm/LLMProvider.js b/node_modules/@browserbasehq/stagehand/dist/cjs/lib/v3/llm/LLMProvider.js
-index c138ce5..c799b5a 100644
+index c138ce5..51d260c 100644
 --- a/node_modules/@browserbasehq/stagehand/dist/cjs/lib/v3/llm/LLMProvider.js
 +++ b/node_modules/@browserbasehq/stagehand/dist/cjs/lib/v3/llm/LLMProvider.js
-@@ -97,7 +97,16 @@ function getAISDKLanguageModel(subProvider, subModelName, clientOptions, middlew
+@@ -97,7 +97,24 @@ function getAISDKLanguageModel(subProvider, subModelName, clientOptions, middlew
              throw new sdkErrors_js_1.UnsupportedAISDKModelProviderError(subProvider, Object.keys(AISDKProvidersWithAPIKey));
          }
          const provider = creator(clientOptions);
@@ -14,17 +14,25 @@ index c138ce5..c799b5a 100644
 +        const useOpenRouterChat = typeof baseUrl === "string" &&
 +            baseUrl.toLowerCase().includes("openrouter") &&
 +            typeof provider.chat === "function";
-+        model = useOpenRouterChat
-+            ? provider.chat(`${subProvider}/${subModelName}`)
-+            : provider(subModelName);
++        if (useOpenRouterChat) {
++            // OpenRouter slugs are usually vendor/model (one slash), e.g. meta-llama/llama-3.3-70b-instruct:free.
++            // Stagehand splits only on the first slash, so legacy ids like openai/meta-llama/... must map to the inner slug.
++            const openRouterModelId = subModelName.includes("/")
++                ? subModelName
++                : `${subProvider}/${subModelName}`;
++            model = provider.chat(openRouterModelId);
++        }
++        else {
++            model = provider(subModelName);
++        }
      }
      else {
          const provider = AISDKProviders[subProvider];
 diff --git a/node_modules/@browserbasehq/stagehand/dist/esm/lib/v3/llm/LLMProvider.js b/node_modules/@browserbasehq/stagehand/dist/esm/lib/v3/llm/LLMProvider.js
-index da6ed7f..c06a426 100644
+index da6ed7f..a7f6fbb 100644
 --- a/node_modules/@browserbasehq/stagehand/dist/esm/lib/v3/llm/LLMProvider.js
 +++ b/node_modules/@browserbasehq/stagehand/dist/esm/lib/v3/llm/LLMProvider.js
-@@ -93,7 +93,16 @@ export function getAISDKLanguageModel(subProvider, subModelName, clientOptions,
+@@ -93,7 +93,24 @@ export function getAISDKLanguageModel(subProvider, subModelName, clientOptions,
              throw new UnsupportedAISDKModelProviderError(subProvider, Object.keys(AISDKProvidersWithAPIKey));
          }
          const provider = creator(clientOptions);
@@ -36,9 +44,17 @@ index da6ed7f..c06a426 100644
 +        const useOpenRouterChat = typeof baseUrl === "string" &&
 +            baseUrl.toLowerCase().includes("openrouter") &&
 +            typeof provider.chat === "function";
-+        model = useOpenRouterChat
-+            ? provider.chat(`${subProvider}/${subModelName}`)
-+            : provider(subModelName);
++        if (useOpenRouterChat) {
++            // OpenRouter slugs are usually vendor/model (one slash), e.g. meta-llama/llama-3.3-70b-instruct:free.
++            // Stagehand splits only on the first slash, so legacy ids like openai/meta-llama/... must map to the inner slug.
++            const openRouterModelId = subModelName.includes("/")
++                ? subModelName
++                : `${subProvider}/${subModelName}`;
++            model = provider.chat(openRouterModelId);
++        }
++        else {
++            model = provider(subModelName);
++        }
      }
      else {
          const provider = AISDKProviders[subProvider];
