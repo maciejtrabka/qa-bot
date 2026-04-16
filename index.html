@@ -43,10 +43,7 @@
         var out = document.querySelector('[data-testid="hello-output"]');
         if (!btn || !out) return;
         btn.addEventListener('click', function () {
-          var p = document.createElement('p');
-          p.className = 'hello-line';
-          p.textContent = 'Hello world';
-          out.appendChild(p);
+          /* intentional regression for PR gate test — do not append Hello world */
         });
       })();
     </script>
