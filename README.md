@@ -1,6 +1,6 @@
 # qa-bot
 
-Statyczna strona testowa i workflow **PR browser agent**: przy PR do `main` CI zapisuje kontekst PR w `pr-context/`, a agent **Stagehand** + **OpenRouter** wykonuje QA wg **[`pr-agent-qa-prompt.md`](pr-agent-qa-prompt.md)** (albo prompt ze zmiennej **`PR_AGENT_QA_PROMPT`** w GitHub). Wynik zaliczenia to **werdykt LLM** (`qaPassed` w `extract`), nie osobny test Playwright w kodzie agenta.
+Statyczna strona testowa i workflow **PR browser agent**: przy PR do `main` CI zapisuje kontekst PR w `pr-context/`, a agent **Stagehand** + **OpenRouter** wykonuje QA wg **[`pr-agent-qa-prompt.md`](pr-agent-qa-prompt.md)** (albo prompt ze zmiennej **`PR_AGENT_QA_PROMPT`** w GitHub). Wynik zaliczenia to **werdykt LLM** (`qaPassed` w `extract`). **Nie ma** osobnego jobu Playwright z `expect` w repo — Playwright jest tylko pod Chromium dla Stagehand.
 
 ## Szybki start (lokalnie)
 

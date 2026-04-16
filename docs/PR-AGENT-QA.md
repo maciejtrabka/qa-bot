@@ -19,7 +19,7 @@ Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR). Krok **`extract`**
 | Strona + przycisk | [`index.html`](../index.html) |
 | Agent (LLM + DOM) | [`scripts/pr-browser-agent.ts`](../scripts/pr-browser-agent.ts) |
 | Workflow | [`.github/workflows/pr-browser-agent.yml`](../.github/workflows/pr-browser-agent.yml) |
-| Kontekst PR (generowany na CI) | `pr-context/pr.json`, `pr-context/files.txt`, `pr-context/diff.patch` |
+| Kontekst PR (generowany na CI / lokalnie) | `pr-context/pr.json`, `pr-context/files.txt`, `pr-context/diff.patch` (katalog w `.gitignore`) |
 | Prompt QA (commitowany) | [`pr-agent-qa-prompt.md`](../pr-agent-qa-prompt.md) |
 
 ## Sekrety i zmienne
@@ -76,5 +76,5 @@ Opcjonalnie lokalnie: `PR_AGENT_PROMPT_FILE=inny-plik.md` albo `PR_AGENT_PROMPT=
 
 ## Uwagi
 
-- Node na runnerze: **20.x** (zgodnie z `engines` Stagehand; unikaj 21.x na CI).
+- Node na runnerze: **20.x** (ustawione w workflow; Stagehand wymaga współczesnego Node — trzymaj się wersji z joba, unikaj eksperymentalnych majorów na CI).
 - Logi przy błędzie: artifact **`pr-agent-logs`** (`pr-agent.log`, `pr-agent-failure.txt`).
