@@ -85,7 +85,9 @@ jobs:
           # Puste = użyj pliku PR_AGENT_PROMPT_FILE. Możesz wkleić prompt w Repo → Settings → Variables → PR_AGENT_QA_PROMPT
           PR_AGENT_PROMPT: ${{ vars.PR_AGENT_QA_PROMPT }}
           PR_AGENT_PROMPT_FILE: ${{ github.event_name == 'workflow_dispatch' && inputs.prompt_file || 'pr-agent-qa-prompt.md' }}
-        run: npm run agent:pr-browser 2>&1 | tee pr-agent.log
+        run: |
+          set -euo pipefail
+          npm run agent:pr-browser 2>&1 | tee pr-agent.log
 
       - name: Upload logs on failure
         if: failure()
