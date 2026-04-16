@@ -111,6 +111,60 @@ function formatPrContextForPrompt(ctx: PrContextMaterial | null): string {
   ].join("\n");
 }
 
+/** Extra paragraphs appended to pr-agent-failure.txt → visible in the PR comment workflow. */
+function appendFailureDiagnostics(detail: string): string {
+  const lower = detail.toLowerCase();
+  const sections: string[] = [];
+
+  const isQaVerdict =
+    detail.includes("QA gate failed") || detail.includes("qaPassed=false");
+
+  // Avoid matching line:column like `file.ts:429:10` with a bare `\b429\b`.
+  const looksRateLimited =
+    /\bstatus\s*code\s*:\s*429\b/i.test(detail) ||
+    /\bhttp\/\d(?:\.\d)?\s+429\b/i.test(detail) ||
+    /"code"\s*:\s*429\b/.test(detail) ||
+    lower.includes("rate limit") ||
+    lower.includes("ratelimit") ||
+    lower.includes("too many requests") ||
+    lower.includes("resource_exhausted");
+
+  if (looksRateLimited && !isQaVerdict) {
+    sections.push(
+      "",
+      "## Podpowiedź (wykryto limit API)",
+      "",
+      "W logu widać sygnały **HTTP 429 / rate limit** albo równoważny komunikat o **limicie zapytań**.",
+      "To zwykle **przepustowość lub quota u dostawcy** (np. OpenRouter), często przy **darmowym lub tanim modelu** — **nie** oznacza samo w sobie, że zmiana w PR jest zła.",
+      "Co dalej: odczekaj i **uruchom workflow ponownie**, rozważ **płatny plan / inny model** (`STAGEHAND_MODEL`), ewentualnie **retry z backoff** w pipeline."
+    );
+  }
+
+  const looksInfra =
+    !isQaVerdict &&
+    !looksRateLimited &&
+    (lower.includes("provider returned error") ||
+      lower.includes("invalid json response") ||
+      lower.includes("ai_retryerror") ||
+      lower.includes("econnreset") ||
+      lower.includes("etimedout"));
+
+  if (looksInfra) {
+    sections.push(
+      "",
+      "## Podpowiedź (błąd infrastruktury LLM)",
+      "",
+      "Błąd wygląda na **odmowę lub niepoprawną odpowiedź API** (nie na werdykt QA z prompta).",
+      "Sprawdź status OpenRouter, limity konta i ustawienia modelu; ponów run — to **nie** jest twardy dowód regresji w UI."
+    );
+  }
+
+  if (sections.length === 0) {
+    return detail;
+  }
+  return `${detail.trimEnd()}\n${sections.join("\n")}\n`;
+}
+
 function loadQaPrompt(): string {
   const fromEnv = process.env.PR_AGENT_PROMPT?.trim();
   if (fromEnv) {
@@ -261,9 +315,10 @@ async function main() {
   } catch (e) {
     const detail =
       e instanceof Error ? `${e.message}\n\n${e.stack ?? ""}` : String(e);
-    console.error(detail);
+    const detailWithHints = appendFailureDiagnostics(detail);
+    console.error(detailWithHints);
     try {
-      writeFileSync(failureLogPath, detail, "utf8");
+      writeFileSync(failureLogPath, detailWithHints, "utf8");
     } catch {
       /* ignore */
     }
