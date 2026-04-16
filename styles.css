@@ -86,7 +86,7 @@ h1 {
   font-weight: 600;
   font-size: 0.95rem;
   cursor: pointer;
-  background: var(--accent);
+  background: #dc2626;
   color: #fff;
 }
 
