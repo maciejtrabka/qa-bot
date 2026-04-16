@@ -53,6 +53,8 @@ Plik workflow w repo jest poprawny — kluczowe jest **mieć go już na `main`**
 
 ## Jak zrobić „zły” PR testowy (dla agenta)
 
+**Tylko na gałęzi PR (nie na `main`):** poniższe kroki wykonuj na **osobnej gałęzi** z otwartym **pull requestem do `main`**. Po teście **zamknij PR bez merge** albo cofnij zmiany — **`main` w repozytorium ma nadal** poprawne `'Hello world'` w `index.html`. Na `main` commitujemy wyłącznie **dokumentację i prompt QA** (jak ten plik), a nie „zepsutą” stronę.
+
 1. **Opis PR:** napisz np. że zmieniasz kolor przycisku (żeby recenzent widział intencję kosmetyczną).
 2. W **CSS** (np. [`styles.css`](../styles.css)) zmień `--accent` lub tło `.btn` — wyraźna zmiana wizualna.
 3. W **JS w `index.html`** zostaw handler działający (nadal dodaje akapit do `[data-testid="hello-output"]`), ale zmień **`p.textContent`** z `'Hello world'` na **losowy ciąg znaków** bez tej frazy, np. `'asdasdansidufwe'`. To symuluje regresję treści bez „wyzerowania” UI — coś się pojawia, ale **nie** jest to oczekiwany tekst.
