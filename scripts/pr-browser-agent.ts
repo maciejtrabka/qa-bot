@@ -15,7 +15,7 @@ const BASE_URL = (process.env.BASE_URL ?? "http://127.0.0.1:9333").replace(
 const apiKey = process.env.OPENROUTER_API_KEY?.trim();
 const modelName =
   process.env.STAGEHAND_MODEL?.trim() ||
-  "openai/meta-llama/llama-3.3-70b-instruct:free";
+  "meta-llama/llama-3.3-70b-instruct:free";
 
 const failureLogPath = process.env.PR_AGENT_FAILURE_LOG ?? "pr-agent-failure.txt";
 

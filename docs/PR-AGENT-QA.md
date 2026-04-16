@@ -27,7 +27,7 @@ Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR). Krok **`extract`**
 | Nazwa | Gdzie | Opis |
 | ----- | ----- | ----- |
 | `OPENROUTER_API_KEY` | GitHub → Settings → Secrets and variables → Actions | Wymagane do wywołań LLM (Stagehand). |
-| `STAGEHAND_MODEL` | (Opcjonalnie) Actions **Variables** | Pełny slug modelu, np. `openai/meta-llama/llama-3.3-70b-instruct:free`. Puste = domyślny model w skrypcie. |
+| `STAGEHAND_MODEL` | (Opcjonalnie) Actions **Variables** | Pełny slug OpenRouter, np. `meta-llama/llama-3.3-70b-instruct:free` (darmowy, bywa **429**). Puste = domyślny model w skrypcie. |
 | `PR_AGENT_QA_PROMPT` | (Opcjonalnie) Actions **Variables** | Pełny tekst prompta QA — jeśli ustawiony, **zastępuje** plik `pr-agent-qa-prompt.md`. |
 
 **PR z forka** zwykle **nie** dostaje sekretów — MVP zakłada PR-y **z tego samego repozytorium**.
