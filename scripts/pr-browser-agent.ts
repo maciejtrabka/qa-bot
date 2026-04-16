@@ -6,6 +6,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Stagehand } from "@browserbasehq/stagehand";
+import type { Page as StagehandPage } from "@browserbasehq/stagehand/lib/v3/understudy/page.js";
 import { z } from "zod";
 
 const BASE_URL = (process.env.BASE_URL ?? "http://127.0.0.1:9333").replace(
@@ -286,6 +287,56 @@ function loadQaPrompt(): string {
   return text;
 }
 
+/**
+ * Hard gate: primary CTA must append a visible line under hello-output.
+ * Catches wiring/selector bugs that an LLM may excuse when the PR title says "style only".
+ * Skip locally with PR_AGENT_SKIP_SMOKE=1.
+ */
+async function runDeterministicLandingSmoke(page: StagehandPage): Promise<void> {
+  if (process.env.PR_AGENT_SKIP_SMOKE?.trim() === "1") {
+    console.log("Deterministic smoke: skipped (PR_AGENT_SKIP_SMOKE=1)");
+    return;
+  }
+
+  await page.goto(`${BASE_URL}/`, {
+    waitUntil: "domcontentloaded",
+    timeoutMs: 30_000,
+  });
+
+  const cta = page.locator('[data-testid="cta-primary"]');
+  const lineLocator = page.locator('[data-testid="hello-output"] .hello-line');
+
+  const visible = await cta.isVisible().catch(() => false);
+  if (!visible) {
+    const msg =
+      "Deterministic QA failed: [data-testid=cta-primary] not visible — page may be broken or wrong route.";
+    writePrFailureComment(formatGenericFailureComment(msg));
+    throw new Error(msg);
+  }
+
+  const linesBefore = await lineLocator.count();
+  await cta.click();
+
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const n = await lineLocator.count();
+    if (n > linesBefore) {
+      console.log("Deterministic smoke: OK (hello lines:", n, ")");
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  const msg =
+    "Deterministic QA failed: after clicking [data-testid=cta-primary], expected a new .hello-line under [data-testid=hello-output] (e.g. broken querySelector, dead handler, or wrong container).";
+  writePrFailureComment(
+    formatGenericFailureComment(
+      "Twardy test (CDP): przycisk CTA nie dodał oczekiwanego wiersza — patrz log."
+    )
+  );
+  throw new Error(msg);
+}
+
 function buildActInstruction(
   prCtxBlock: string,
   qaPrompt: string,
@@ -366,10 +417,7 @@ async function main() {
 
     const origin = new URL(`${BASE_URL}/`).origin;
 
-    await page.goto(`${BASE_URL}/`, {
-      waitUntil: "domcontentloaded",
-      timeoutMs: 30_000,
-    });
+    await runDeterministicLandingSmoke(page);
 
     const actText = buildActInstruction(prCtxBlock, qaPrompt, origin);
     await stagehand.act(actText);

@@ -10,9 +10,11 @@ Przy **pull requeście do `main`** workflow **„PR browser agent”** zapisuje 
 - zmienna repozytorium **`PR_AGENT_QA_PROMPT`** (treść trafia do env `PR_AGENT_PROMPT` i **nadpisuje** plik), albo
 - przy **`workflow_dispatch`**: pole **prompt_file** (ścieżka do innego pliku markdown z promptem).
 
+Przed **`act`** skrypt wykonuje **twardy test dymny** na stronie głównej (CDP / Stagehand): klik w `[data-testid="cta-primary"]` i sprawdzenie, że przybywa `.hello-line` w `[data-testid="hello-output"]`. To **niezależne od LLM** łapie regresje typu zły `querySelector`, brak handlera czy pusty `click` — sytuacje, które model mógł uzasadnić przy opisie PR „tylko styl”.
+
 Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR). Krok **`extract`** zwraca strukturalny werdykt **`qaPassed`** — jeśli model ustawi `false` (albo wystąpi błąd), job **fail** → możliwa **blokada merge** + **krótki komentarz na PR** (treść z pliku `pr-agent-pr-comment.md` generowanego przez skrypt; bez wklejania całego prompta ani diffa).
 
-**Uwaga:** bramka opiera się na **ocenie LLM**, nie na osobnym skrypcie Playwright z twardymi selektorami. Możesz dopisać w promptcie konkretne selektory / kroki, żeby model był bardziej deterministyczny.
+**Uwaga:** werdykt końcowy łączy **deterministyczny smoke** (powyżej) z **oceną LLM** wg prompta. Prompt został doprecyzowany tak, by model nie pomijał głównego CTA pod pretekstem kosmetycznego opisu PR.
 
 ## Pliki w repo
 
@@ -31,6 +33,7 @@ Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR). Krok **`extract`**
 | `OPENROUTER_API_KEY` | GitHub → Settings → Secrets and variables → Actions | Wymagane do wywołań LLM (Stagehand). |
 | `STAGEHAND_MODEL` | (Opcjonalnie) Actions **Variables** | Pełny slug OpenRouter, np. `meta-llama/llama-3.3-70b-instruct:free` (darmowy, bywa **429**). Puste = domyślny model w skrypcie. |
 | `PR_AGENT_QA_PROMPT` | (Opcjonalnie) Actions **Variables** | Pełny tekst prompta QA — jeśli ustawiony, **zastępuje** plik `pr-agent-qa-prompt.md`. |
+| `PR_AGENT_SKIP_SMOKE` | Tylko lokalnie (opcjonalnie) | Ustaw `1`, żeby pominąć twardy test CTA (np. gdy nie masz uruchomionego `serve`). Na CI nie ustawiaj. |
 
 **PR z forka** zwykle **nie** dostaje sekretów — MVP zakłada PR-y **z tego samego repozytorium**.
 
@@ -62,6 +65,8 @@ Plik workflow w repo jest poprawny — kluczowe jest **mieć go już na `main`**
 3. W **JS w `index.html`** zostaw handler działający (nadal dodaje akapit do `[data-testid="hello-output"]`), ale zmień **`p.textContent`** z `'Hello world'` na **losowy ciąg znaków** bez tej frazy, np. `'asdasdansidufwe'`. To symuluje regresję treści bez „wyzerowania” UI — coś się pojawia, ale **nie** jest to oczekiwany tekst.
 
 Oczekiwany efekt: job **`pr_browser_agent`** → zwykle **failure** + komentarz na PR, gdy model z diffa i UI uzna regresję (np. zamiast sensownego **Hello world** widać losowy ciąg). Przy bardzo ogólnym prompcie werdykt może być mniej przewidywalny — wtedy doprecyzuj prompt albo użyj **`PR_AGENT_QA_PROMPT`** ze sztywniejszymi krokami.
+
+Jeśli zamiast regresji treści wolisz sprawdzić „martwy” przycisk (np. literówka w `data-testid` kontenera wyniku), sam **LLM mógł wcześniej przeoczyć** ten scenariusz przy opisie „tylko kolor” — obecnie taki przypadek powinien zatrzymać **twardy smoke** (brak nowej `.hello-line` po kliknięciu).
 
 ## Lokalnie
 
