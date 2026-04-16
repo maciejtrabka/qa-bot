@@ -31,12 +31,7 @@
         var btn = document.querySelector('[data-testid="cta-primary"]');
         var out = document.querySelector('[data-testid="hello-output"]');
         if (!btn || !out) return;
-        btn.addEventListener("click", function () {
-          var p = document.createElement("p");
-          p.className = "hello-line";
-          p.textContent = "Hello world";
-          out.appendChild(p);
-        });
+        btn.addEventListener("click", function () {});
       })();
     </script>
   </body>
