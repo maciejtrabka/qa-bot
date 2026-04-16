@@ -6,6 +6,7 @@ node_modules/
 .vercel
 pr-agent.log
 pr-agent-failure.txt
+pr-agent-pr-comment.md
 pr-context/
 test-results/
 NEW-THREAD-CONTEXT.md

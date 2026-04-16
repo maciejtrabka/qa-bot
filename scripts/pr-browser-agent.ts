@@ -19,6 +19,10 @@ const modelName =
 
 const failureLogPath = process.env.PR_AGENT_FAILURE_LOG ?? "pr-agent-failure.txt";
 
+/** Short markdown for `gh pr comment` (written on failure; workflow reads this file). */
+const prAgentPrCommentPath =
+  process.env.PR_AGENT_PR_COMMENT_FILE?.trim() || "pr-agent-pr-comment.md";
+
 const contextDir = (process.env.PR_AGENT_CONTEXT_DIR ?? "pr-context").replace(
   /\/$/,
   ""
@@ -29,6 +33,17 @@ const promptFile =
 
 const MAX_INLINE_PROMPT = 48_000;
 const MAX_ACT_PROMPT = 95_000;
+
+const verdictSchema = z.object({
+  qaPassed: z
+    .boolean()
+    .describe(
+      "true only if every blocking criterion from the QA instructions is satisfied"
+    ),
+  whatYouChecked: z.string(),
+  blockingFindings: z.array(z.string()).nullish(),
+  notes: z.string().nullish(),
+});
 
 type PrContextMaterial = {
   title: string;
@@ -111,7 +126,85 @@ function formatPrContextForPrompt(ctx: PrContextMaterial | null): string {
   ].join("\n");
 }
 
-/** Extra paragraphs appended to pr-agent-failure.txt → visible in the PR comment workflow. */
+function trimForPrComment(s: string, max: number): string {
+  const t = s.trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, Math.max(0, max - 1))}…`;
+}
+
+function writePrFailureComment(markdown: string): void {
+  const max = 8000;
+  const out =
+    markdown.length > max ? `${markdown.slice(0, max)}\n\n[obcięto]` : markdown;
+  writeFileSync(prAgentPrCommentPath, out, "utf8");
+}
+
+function formatQaVerdictComment(
+  verdict: z.infer<typeof verdictSchema>
+): string {
+  const checked = trimForPrComment(verdict.whatYouChecked, 320);
+  const findings = (verdict.blockingFindings?.filter((s) => s?.trim()) ?? []).slice(
+    0,
+    6
+  );
+  const notes = verdict.notes?.trim()
+    ? trimForPrComment(verdict.notes.trim(), 400)
+    : "";
+
+  const parts = [
+    "### Agent PR gate — niepowodzenie",
+    "",
+    "Check **`pr_browser_agent`** nie przeszedł — model zwrócił **`qaPassed: false`**.",
+    "",
+    "**Co sprawdzono:**",
+    checked,
+    "",
+  ];
+
+  if (findings.length) {
+    parts.push(
+      "**Blokuje merge:**",
+      ...findings.map((f) => `- ${trimForPrComment(f, 420)}`),
+      ""
+    );
+  } else {
+    parts.push(
+      "**Blokuje merge:** brak listy `blockingFindings` z modelu — zajrzyj do logów w Actions.",
+      ""
+    );
+  }
+
+  if (notes) {
+    parts.push("**Notatka:**", notes, "");
+  }
+
+  parts.push(
+    "<sub>Pełne logi: artefakt **pr-agent-logs** (workflow *PR browser agent*).</sub>"
+  );
+
+  return parts.join("\n");
+}
+
+function firstMeaningfulFailureLine(detail: string): string {
+  const head = detail.split(/\n\s*at\s+/m)[0] ?? detail;
+  const line = head.split("\n").find((l) => l.trim())?.trim() ?? "Unknown error";
+  return trimForPrComment(line, 500);
+}
+
+function formatGenericFailureComment(summary: string): string {
+  return [
+    "### Agent PR gate — niepowodzenie",
+    "",
+    "Agent nie ukończył kroku QA (błąd narzędzia, API lub nieprzewidywana odpowiedź).",
+    "",
+    "**Skrót:**",
+    summary,
+    "",
+    "<sub>Pełne logi: artefakt **pr-agent-logs**.</sub>",
+  ].join("\n");
+}
+
+/** Extra paragraphs appended to pr-agent-failure.txt (diagnostics for humans / artifact). */
 function appendFailureDiagnostics(detail: string): string {
   const lower = detail.toLowerCase();
   const sections: string[] = [];
@@ -219,6 +312,11 @@ async function main() {
     const m = "Missing OPENROUTER_API_KEY (required for Stagehand LLM steps in CI).";
     console.error(m);
     writeFileSync(failureLogPath, m, "utf8");
+    writePrFailureComment(
+      formatGenericFailureComment(
+        "Brak sekretu OPENROUTER_API_KEY w GitHub Actions (Settings → Secrets and variables → Actions)."
+      )
+    );
     process.exit(1);
   }
 
@@ -248,17 +346,6 @@ async function main() {
         "--disable-gpu",
       ],
     },
-  });
-
-  const verdictSchema = z.object({
-    qaPassed: z
-      .boolean()
-      .describe(
-        "true only if every blocking criterion from the QA instructions is satisfied"
-      ),
-    whatYouChecked: z.string(),
-    blockingFindings: z.array(z.string()).nullish(),
-    notes: z.string().nullish(),
   });
 
   try {
@@ -303,12 +390,11 @@ async function main() {
     console.log("LLM verdict:", JSON.stringify(verdict, null, 2));
 
     if (!verdict.qaPassed) {
-      const findings = verdict.blockingFindings?.length
-        ? verdict.blockingFindings.join("\n- ")
-        : "(none listed)";
-      throw new Error(
-        `QA gate failed (model verdict: qaPassed=false).\nWhat was checked: ${verdict.whatYouChecked}\nBlocking findings:\n- ${findings}\nNotes: ${verdict.notes ?? ""}`
-      );
+      writePrFailureComment(formatQaVerdictComment(verdict));
+      const hint =
+        verdict.blockingFindings?.find((s) => s?.trim())?.trim() ??
+        verdict.whatYouChecked.slice(0, 160);
+      throw new Error(`QA gate failed (qaPassed=false): ${hint}`);
     }
 
     console.log("PR browser agent: QA gate passed (model verdict).");
@@ -321,6 +407,11 @@ async function main() {
       writeFileSync(failureLogPath, detailWithHints, "utf8");
     } catch {
       /* ignore */
+    }
+    if (!existsSync(prAgentPrCommentPath)) {
+      writePrFailureComment(
+        formatGenericFailureComment(firstMeaningfulFailureLine(detail))
+      );
     }
     process.exitCode = 1;
   } finally {

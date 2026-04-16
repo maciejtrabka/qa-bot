@@ -8,7 +8,7 @@ Przy **pull requeście do `main`** workflow **„PR browser agent”** zapisuje 
 - zmienna repozytorium **`PR_AGENT_QA_PROMPT`** (treść trafia do env `PR_AGENT_PROMPT` i **nadpisuje** plik), albo
 - przy **`workflow_dispatch`**: pole **prompt_file** (ścieżka do innego pliku markdown z promptem).
 
-Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR). Krok **`extract`** zwraca strukturalny werdykt **`qaPassed`** — jeśli model ustawi `false` (albo wystąpi błąd), job **fail** → możliwa **blokada merge** + **komentarz na PR** z logiem.
+Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR). Krok **`extract`** zwraca strukturalny werdykt **`qaPassed`** — jeśli model ustawi `false` (albo wystąpi błąd), job **fail** → możliwa **blokada merge** + **krótki komentarz na PR** (treść z pliku `pr-agent-pr-comment.md` generowanego przez skrypt; bez wklejania całego prompta ani diffa).
 
 **Uwaga:** bramka opiera się na **ocenie LLM**, nie na osobnym skrypcie Playwright z twardymi selektorami. Możesz dopisać w promptcie konkretne selektory / kroki, żeby model był bardziej deterministyczny.
 
@@ -79,4 +79,4 @@ Opcjonalnie lokalnie: `PR_AGENT_PROMPT_FILE=inny-plik.md` albo `PR_AGENT_PROMPT=
 ## Uwagi
 
 - Node na runnerze: **20.x** (ustawione w workflow; Stagehand wymaga współczesnego Node — trzymaj się wersji z joba, unikaj eksperymentalnych majorów na CI).
-- Logi przy błędzie: artifact **`pr-agent-logs`** (`pr-agent.log`, `pr-agent-failure.txt`).
+- Logi przy błędzie: artifact **`pr-agent-logs`** (`pr-agent.log`, `pr-agent-failure.txt`, opcjonalnie `pr-agent-pr-comment.md` — ta sama treść co komentarz na PR).
