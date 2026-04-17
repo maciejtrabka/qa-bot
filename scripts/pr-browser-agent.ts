@@ -312,7 +312,6 @@ function renderEnvironmentSection(env: QaEnvironment): string[] {
   return [
     "### Environment",
     "",
-    `- **Preview URL:** ${env.previewUrl}`,
     `- **Browser:** ${trimForPrComment(env.userAgent || "(unknown)", 240)}`,
     `- **Run time (UTC):** ${env.runTimeUtc}`,
     "",
