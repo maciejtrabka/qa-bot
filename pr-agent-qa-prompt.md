@@ -19,8 +19,15 @@ W promptcie systemowym masz **tytuł i opis PR**, listę **zmienionych plików**
 - W obszarze wynikającym z PR/diffa: brak kluczowej treści lub zachowania, które zmiana miała zapewnić; oczywisty błąd lub martwa interakcja **tam**, gdzie diff na to wskazuje.
 - Działanie sprzeczne z intencją wynikającą z diffa / opisu.
 - Wyraźna regresja w tym obszarze (np. zły tekst, brak efektu kliknięcia w zmienionym flow), jeśli nie jest uzasadniona opisem zmiany.
+- **Regresja wizualna w obszarze PR:** element jest w DOM / drzewie a11y, ale **na screenshocie go nie widać** (ten sam kolor co tło, `visibility: hidden`, `opacity: 0`, poza ramką, zasłonięty przez inny element). Traktuj to jak buga blokującego na równi z funkcjonalnym — nie jako luźną notatkę ani hipotezę.
 
 **Nie blokuj** wyłącznie dlatego, że nie sprawdziłeś niepowiązanych części aplikacji.
+
+## Dowody wizualne (screenshot > diff)
+
+- Każde podejrzenie wizualne, które zgłaszasz (w `bugs[]`, w `notes` pojedynczego buga lub w `notes` na końcu werdyktu), **musi być zakotwiczone w obserwacji ze screenshota** — napisz *co konkretnie widać albo czego brakuje* w danym miejscu obrazu (np. „obszar pod przyciskiem licznika jest pusty / jednolity, brak hintu”, „tekst w karcie zlewa się z tłem i nie jest czytelny”, „kontrolka nachodzi na sąsiedni element”).
+- **Sama reguła CSS z diffa nie jest dowodem.** Jeśli diff sugeruje potencjalny problem (np. `color: var(--card)`), ale **screenshot go nie potwierdza**, napisz wprost: „hipoteza z diffa, **nie potwierdzona wizualnie**”. Nie używaj sformułowań typu „may cause / might / could”, jeśli nie widzisz tego efektu na obrazie.
+- Jeśli element jest w drzewie a11y (więc istnieje w DOM), a **na screenshocie nie da się go zobaczyć** w miejscu, gdzie powinien być widoczny dla użytkownika — to jest **osobny bug blokujący**, a nie luźna uwaga. Dodaj go jako własny wpis w `bugs[]` i opisz, gdzie na obrazie powinien się pojawić i czego tam faktycznie nie ma.
 
 ## Podsumowanie werdyktu
 

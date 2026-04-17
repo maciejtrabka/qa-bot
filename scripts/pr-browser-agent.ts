@@ -527,6 +527,13 @@ function buildVerdictPrompt(
       "**Use the screenshots as the primary source of truth** for anything visual: readable text, visible controls, color contrast, overlapping elements, empty areas where content should appear, hidden/invisible text or buttons (e.g., text with the same color as its background). The DOM/a11y tree cannot express these things.",
       "",
       "Also consider the accessibility-tree text snapshot below for labels, values, and structural context.",
+      "",
+      "### Evidence rules for visual claims (STRICT)",
+      "",
+      "- Any visual issue you report — in `bugs[]`, in a bug's `notes`, or in the top-level `notes` — MUST be anchored to a concrete observation on the attached screenshots: say what you actually see (or what is missing) in a specific region (e.g. 'the strip under the counter shows no hint text', 'the label blends into the card background and is unreadable', 'the button overlaps the badge').",
+      "- A CSS rule or a diff hunk is NOT visual evidence on its own. If the diff hints at a visual problem but the screenshots do not show it, state that explicitly: write 'diff hypothesis, not visually confirmed' and do NOT use hedged wording like 'may cause', 'might', 'could'.",
+      "- If an element is present in the accessibility/DOM snapshot but is not visible on the screenshots (same color as its background, `visibility: hidden`, `opacity: 0`, clipped off-frame, covered by another element) AND it sits inside the PR change region, treat it as a BLOCKING visual bug on par with a broken handler. Create a dedicated entry in `bugs[]` for it; do not demote it to `notes`.",
+      "- Evidence rules apply only inside the PR change region; do not expand scope to the rest of the site.",
       ""
     );
   } else {
@@ -656,6 +663,7 @@ async function computeVerdict({
     "You are a senior QA engineer reviewing a pull request preview build.",
     "You judge only the PR change region based on the PR context, attached screenshots, and the accessibility/page text snapshot.",
     "Visual regressions that only show up in screenshots (invisible or illegible text, hidden/obscured controls, clearly broken layout) are blocking when they fall inside the PR change region.",
+    "Every visual claim in your verdict must be grounded in the attached screenshots, not in CSS rules from the diff. If the diff hints at a visual problem that the screenshots do not confirm, either omit it or state 'diff hypothesis, not visually confirmed' — do not use hedged wording like 'may cause' / 'might' / 'could'.",
     "",
     "### Response format (STRICT)",
     "Your entire response must be ONE fenced JSON code block and nothing else:",
