@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Stagehand } from "@browserbasehq/stagehand";
-import { generateObject } from "ai";
+import { generateText } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
 
@@ -556,11 +556,29 @@ async function computeVerdict({
     `Vision verdict: calling ${modelName} with ${imageParts.length} screenshot(s), prompt ${userText.length} chars.`
   );
 
-  const result = await generateObject({
+  const systemPrompt = [
+    "You are a senior QA engineer reviewing a pull request preview build.",
+    "You judge only the PR change region based on the PR context, attached screenshots, and the accessibility/page text snapshot.",
+    "Visual regressions that only show up in screenshots (invisible or illegible text, hidden/obscured controls, clearly broken layout) are blocking when they fall inside the PR change region.",
+    "",
+    "Respond with a SINGLE JSON object and nothing else — no prose, no markdown fences, no commentary before or after.",
+    "The JSON must exactly match this TypeScript-style shape:",
+    "{",
+    '  "qaPassed": boolean,',
+    '  "whatYouChecked": string,                 // one short English sentence',
+    '  "blockingFindings"?: string[],            // optional 1-3 bullets (English)',
+    '  "notes"?: string,                         // optional non-blocking context',
+    '  "headline"?: string,                      // required if qaPassed=false',
+    '  "stepsToReproduce"?: string[],            // required if qaPassed=false (1-5 items)',
+    '  "expectedResult"?: string,                // required if qaPassed=false',
+    '  "actualResult"?: string                   // required if qaPassed=false',
+    "}",
+    "Output valid JSON only. Do not wrap it in code fences.",
+  ].join("\n");
+
+  const result = await generateText({
     model,
-    schema: verdictSchema,
-    system:
-      "You are a senior QA engineer reviewing a pull request preview build. You judge only the PR change region based on the PR context, attached screenshots, and the accessibility/page text snapshot. Visual regressions that only show up in screenshots (invisible or illegible text, hidden/obscured controls, clearly broken layout) are blocking when they fall inside the PR change region. Return the structured verdict.",
+    system: systemPrompt,
     messages: [
       {
         role: "user",
@@ -570,7 +588,51 @@ async function computeVerdict({
     maxRetries: 1,
   });
 
-  return result.object;
+  const raw = (result.text ?? "").trim();
+  const parsed = parseVerdictJson(raw);
+  const validated = verdictSchema.safeParse(parsed);
+  if (!validated.success) {
+    console.error("Raw model output:\n", raw);
+    throw new Error(
+      `Model verdict did not match schema: ${validated.error.message}`
+    );
+  }
+  return validated.data;
+}
+
+function parseVerdictJson(raw: string): unknown {
+  if (!raw) {
+    throw new Error("Model returned empty text for verdict.");
+  }
+
+  const direct = tryParseJson(raw);
+  if (direct !== undefined) return direct;
+
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    const fencedParsed = tryParseJson(fenced[1].trim());
+    if (fencedParsed !== undefined) return fencedParsed;
+  }
+
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    const slice = raw.slice(firstBrace, lastBrace + 1);
+    const sliceParsed = tryParseJson(slice);
+    if (sliceParsed !== undefined) return sliceParsed;
+  }
+
+  throw new Error(
+    `Could not parse JSON from model output. First 500 chars:\n${raw.slice(0, 500)}`
+  );
+}
+
+function tryParseJson(s: string): unknown | undefined {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return undefined;
+  }
 }
 
 let globalStagehand: Stagehand | null = null;
