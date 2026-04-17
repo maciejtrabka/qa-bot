@@ -43,6 +43,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build site
+        run: npm run build
+
       - name: Install Playwright Chromium (Stagehand LOCAL)
         run: npx playwright install --with-deps chromium
 
@@ -62,7 +65,7 @@ jobs:
 
       - name: Start static server
         run: |
-          npx serve . -l 9333 &
+          npx serve dist -l 9333 &
           for i in $(seq 1 60); do
             if curl -sf "http://127.0.0.1:9333/" >/dev/null; then
               echo "serve ready"

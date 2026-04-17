@@ -14,11 +14,13 @@ Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR: tytuł, opis, pliki
 
 **Uwaga:** bramka opiera się wyłącznie na **eksploracji strony przez agenta LLM** zgodnie z promptem — nie ma osobnego deterministycznego testu DOM przed `act`. Jeśli chcesz wyłapać np. martwy przycisk przy opisie PR „tylko styl”, doprecyzuj **`pr-agent-qa-prompt.md`** (lub **`PR_AGENT_QA_PROMPT`**), żeby model musiał zweryfikować CTA i zachowanie względem diffa.
 
+**Zakres testów:** domyślny **[`pr-agent-qa-prompt.md`](../pr-agent-qa-prompt.md)** jest **uniwersalny** (bez opisu konkretnej witryny): agent ma testować **intensywnie okolicę zmiany z PR** (pliki + diff), a **nie** robić pełnej regresji całej aplikacji. Skrypt [`scripts/pr-browser-agent.ts`](../scripts/pr-browser-agent.ts) dopina to w `act` / `extract` (m.in. `whatYouChecked` bez listy odwiedzonych tras).
+
 ## Pliki w repo
 
 | Element | Ścieżka |
 | -------- | -------- |
-| Strona + przycisk | [`index.html`](../index.html) |
+| Witryna React (Vite) + CTA | [`src/App.tsx`](../src/App.tsx), [`src/index.css`](../src/index.css), [`index.html`](../index.html) (entry Vite) |
 | Agent (LLM + DOM) | [`scripts/pr-browser-agent.ts`](../scripts/pr-browser-agent.ts) |
 | Workflow | [`.github/workflows/pr-browser-agent.yml`](../.github/workflows/pr-browser-agent.yml) |
 | Kontekst PR (generowany na CI / lokalnie) | `pr-context/pr.json`, `pr-context/files.txt`, `pr-context/diff.patch` (katalog w `.gitignore`) |
@@ -55,22 +57,26 @@ Plik workflow w repo jest poprawny — kluczowe jest **mieć go już na `main`**
 
 ## Jak zrobić „zły” PR testowy (dla agenta)
 
-**Tylko na gałęzi PR (nie na `main`):** poniższe kroki wykonuj na **osobnej gałęzi** z otwartym **pull requestem do `main`**. Po teście **zamknij PR bez merge** albo cofnij zmiany — **`main` w repozytorium ma nadal** poprawne `'Hello world'` w `index.html`. Na `main` commitujemy wyłącznie **dokumentację i prompt QA** (jak ten plik), a nie „zepsutą” stronę.
+**Tylko na gałęzi PR (nie na `main`):** poniższe kroki wykonuj na **osobnej gałęzi** z otwartym **pull requestem do `main`**. Po teście **zamknij PR bez merge** albo cofnij zmiany — **`main` w repozytorium ma nadal** działające demo w [`src/App.tsx`](../src/App.tsx) (pogoda / fakt / licznik / kurs). Na `main` commitujemy wyłącznie **dokumentację i prompt QA** (jak ten plik), a nie „zepsutą” stronę.
 
 1. **Opis PR:** napisz np. że zmieniasz kolor przycisku (żeby recenzent widział intencję kosmetyczną).
-2. W **CSS** (np. [`styles.css`](../styles.css)) zmień `--accent` lub tło `.btn` — wyraźna zmiana wizualna.
-3. W **JS w `index.html`** zostaw handler działający (nadal dodaje akapit do `[data-testid="hello-output"]`), ale zmień **`p.textContent`** z `'Hello world'` na **losowy ciąg znaków** bez tej frazy, np. `'asdasdansidufwe'`. To symuluje regresję treści bez „wyzerowania” UI — coś się pojawia, ale **nie** jest to oczekiwany tekst.
+2. W **CSS** (np. [`src/index.css`](../src/index.css)) zmień `--accent` lub tło `.btn` — wyraźna zmiana wizualna.
+3. W **React** ([`src/App.tsx`](../src/App.tsx)) wprowadź ukrytą regresję, np.:
+   - zły URL w `fetch` (Open-Meteo / catfact / Frankfurter), żeby zawsze był błąd w `[data-testid="weather-output"]` itd.;
+   - lub zła ścieżka w `response.json()` (np. czytasz `j.wrong` zamiast `j.current.temperature_2m`), żeby temperatura była pusta mimo sukcesu sieci;
+   - albo `setSlotsLeft((n) => n)` zamiast `n + 1` przy plusie — licznik przestaje rosnąć.
 
-Oczekiwany efekt: job **`pr_browser_agent`** → zwykle **failure** + komentarz na PR, gdy model z diffa i UI uzna regresję (np. zamiast sensownego **Hello world** widać losowy ciąg). Przy bardzo ogólnym prompcie werdykt może być mniej przewidywalny — wtedy doprecyzuj prompt albo użyj **`PR_AGENT_QA_PROMPT`** ze sztywniejszymi krokami.
+Oczekiwany efekt: job **`pr_browser_agent`** → zwykle **failure** + komentarz na PR, gdy model z diffa i UI uzna regresję. Przy bardzo ogólnym prompcie werdykt może być mniej przewidywalny — wtedy doprecyzuj prompt albo użyj **`PR_AGENT_QA_PROMPT`** ze sztywniejszymi krokami.
 
-Jeśli zamiast regresji treści wolisz sprawdzić „martwy” przycisk (np. literówka w `data-testid` kontenera wyniku), **LLM może ten scenariusz przeoczyć** przy ogólnym prompcie i opisie „tylko kolor” — wtedy zaostrz instrukcje w promptcie QA (klik w CTA, oczekiwany efekt w DOM, porównanie z diffem).
+Jeśli zamiast regresji logiki wolisz sprawdzić „martwy” przycisk (np. literówka w `data-testid` kontenera wyniku), **LLM może ten scenariusz przeoczyć** przy ogólnym prompcie i opisie „tylko kolor” — wtedy zaostrz instrukcje w promptcie QA (klik w CTA, oczekiwany efekt w DOM, porównanie z diffem).
 
 ## Lokalnie
 
 ```bash
 npm ci
+npm run build
 npx playwright install chromium
-npx serve . -l 9333
+npx serve dist -l 9333
 # drugi terminal:
 cp .env.example .env   # uzupełnij OPENROUTER_API_KEY
 export $(grep -v '^#' .env | xargs)   # albo ręcznie export OPENROUTER_API_KEY=...

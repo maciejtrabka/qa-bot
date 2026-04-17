@@ -1,19 +1,31 @@
 {
   "name": "qa-bot",
   "private": true,
+  "type": "module",
   "scripts": {
     "postinstall": "patch-package",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "agent:pr-browser": "tsx scripts/pr-browser-agent.ts"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@browserbasehq/stagehand": "^3.2.1",
     "@types/node": "^25.0.3",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "deepmerge": "^4.3.1",
     "patch-package": "^8.0.1",
     "playwright": "^1.59.1",
     "serve": "^14.2.4",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.7",
     "zod": "^4.3.6"
   }
 }

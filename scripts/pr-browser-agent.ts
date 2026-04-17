@@ -40,7 +40,7 @@ const verdictSchema = z.object({
     .describe(
       "true only if every blocking criterion from the QA instructions is satisfied"
     ),
-  /** Short line for console / fallback (English). */
+  /** One short English sentence: what behavior you verified in the PR change region (not a list of pages, routes, or nav items visited). */
   whatYouChecked: z.string(),
   /** Optional extra bullets if qaPassed is false (English; keep each under ~200 chars). */
   blockingFindings: z.array(z.string()).nullish(),
@@ -131,7 +131,7 @@ function formatPrContextForPrompt(ctx: PrContextMaterial | null): string {
   if (!ctx) {
     return [
       "PR context: none (no pr-context/pr.json — e.g. local run or workflow_dispatch).",
-      "Do general exploratory QA on this page only.",
+      "Follow the QA instructions: infer a reasonable change region from what you can see; test that area deeply; do not treat this as full-site regression.",
     ].join("\n");
   }
 
@@ -191,7 +191,7 @@ function formatQaVerdictComment(
     .slice(0, 5);
 
   const defaultExpected =
-    "Per the QA instructions and the UI, the primary CTA should produce a clear observable effect.";
+    "Per the QA instructions: behavior in the PR change region matches intent; interactions there work as expected where the change applies.";
 
   const expected = verdict.expectedResult?.trim() || defaultExpected;
 
@@ -224,8 +224,9 @@ function formatQaVerdictComment(
     parts.push(
       "#### Steps to reproduce",
       "",
-      "1. Open the preview at the workflow `BASE_URL` (repo root / home).",
-      "2. Use the primary CTA / action described in the QA instructions and observe the result.",
+      "1. Open the preview at the workflow `BASE_URL`.",
+      "2. Navigate only as needed to reach the UI region affected by the PR.",
+      "3. Exercise the relevant controls there and observe results.",
       ""
     );
   }
@@ -377,7 +378,11 @@ function buildActInstruction(
     "",
     qaPrompt,
     "",
-    `**Scope:** only the app under **${origin}**. Do not navigate away from this origin. Use a single tab.`,
+    `**Origin:** only **${origin}**. Do not open other sites or new tabs.`,
+    "",
+    "**Change-focused QA:** Infer the **smallest UI/behavior region** implied by changed paths + diff + PR description. Navigate **only as needed** to reach that region. Test **intensely inside that region** (multiple meaningful checks). **Do not** perform full-app regression or systematically visit every nav item unless the diff touches shared shell/layout and the QA instructions require a few representative surfaces.",
+    "",
+    "**Verdict wording:** In `whatYouChecked`, summarize **what behavior** you verified in the PR scope — **not** a list of pages, routes, or tabs visited.",
   ].join("\n");
 
   if (core.length > MAX_ACT_PROMPT) {
@@ -455,13 +460,13 @@ async function main() {
         "## QA instructions (same as for actions)",
         qaPrompt,
         "",
-        "Based only on the current page state after your exploration: did the QA instructions pass?",
+        "After your exploration: did the QA instructions pass for the **PR change region** (not for the entire app)?",
         "",
         "## Structured verdict (required)",
         "",
         "- **All strings must be English** (the PR comment is English-only).",
         "- **qaPassed**: boolean.",
-        "- **whatYouChecked**: one short sentence: what you verified on the page (for logs).",
+        "- **whatYouChecked**: one short sentence — **what behavior** you verified in the scope of the PR (do **not** list visited pages, routes, or navigation items).",
         "- If **qaPassed is false**, you MUST also fill:",
         "  - **headline**: one-line title of the blocking issue.",
         "  - **stepsToReproduce**: 1–5 short imperative steps (strings).",

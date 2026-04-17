@@ -1,16 +1,27 @@
 # Instrukcja QA dla agenta przeglądarkowego (PR)
 
-Jesteś na **jednej aplikacji** serwowanej pod `BASE_URL` (początek: strona główna). **Nie wychodź poza ten sam origin** (inne domeny / nowe karty — zabronione). Jeśli zmiana z PR dotyczy innej ścieżki w tej samej aplikacji, **przejdź wewnętrznymi linkami** lub sensownym nawigowaniem po tym samym hoście, żeby dotrzeć do miejsca objętego zmianą.
+Jesteś na **jednej aplikacji** serwowanej pod `BASE_URL` (pierwszy widok po wejściu). **Nie wychodź poza ten sam origin** (inne domeny / nowe karty — zabronione). Nawigacja wewnątrz aplikacji (linki, menu, przełączanie widoków bez zmiany hosta) jest dozwolona **tylko wtedy**, gdy jest **potrzebna**, żeby dotrzeć do obszaru objętego zmianą — nie rób pełnego przeglądu całej witryny.
 
-## Kontekst zmiany (już dostajesz w promptcie systemowym)
+## Kontekst zmiany
 
-Masz **tytuł i opis PR**, listę **zmienionych plików** oraz **fragment diffa**. Potraktuj je jako źródło prawdy o **intencji i zakresie** — nie ignoruj ich przy planowaniu testów.
+W promptcie systemowym masz **tytuł i opis PR**, listę **zmienionych plików** oraz **fragment diffa**. To jest główne źródło prawdy o **zakresie zmiany**. **Diff ma pierwszeństwo** przed tytułem i opisem PR, jeśli się rozjeżdżają.
 
-## Co zrobić
+## Zakres testów: okolica zmiany PR (nie regresja całej aplikacji)
 
-1. **Zrozum, co PR zmienia** (komponent, tekst, zachowanie, układ, obsługa zdarzeń) na podstawie opisu i diffa. **Diff ma pierwszeństwo przed tytułem/opisem PR** — jeśli diff dotyka HTML, inline script lub selektorów, musisz to uwzględnić w weryfikacji, nawet gdy opis mówi wyłącznie o „stylu” lub kolorze.
-2. **Na stronie zweryfikuj**, czy po tej zmianie UI i zachowanie nadal są **spójne i sensowne** dla użytkownika: czy to, co diff sugeruje jako cel, faktycznie działa; czy nic istotnego **nie zniknęło**; czy akcje (klik, wpis, itp.) mają **oczekiwany, logiczny skutek** (brak „martwego” przycisku, pustego miejsca zamiast treści, oczywistej regresji treści/stanu).
-3. **Obowiązkowy minimalny zakres:** na stronie startowej (`BASE_URL`) **zawsze** wykonaj **jedną realną interakcję** z widocznym głównym CTA / przyciskiem akcji (jeśli taki jest) i potwierdź **obserwowalny skutek** zgodny z etykietą / przeznaczeniem (np. pojawia się oczekiwana treść, zmienia się stan). **Nie pomijaj tego kroku** pod pretekstem, że opis PR dotyczy „tylko wyglądu” — martwy CTA lub brak skutku kliknięcia to **blokująca** regresja użyteczności. Dopiero dodatkowo skup się na ryzyku wprost wynikającym z diffa (np. zmienione copy, layout).
-4. **Blokujące (niezaliczony test):** brak kluczowego elementu lub treści, którą zmiana miała zapewnić; działanie sprzeczne z opisem PR; wyraźna regresja (np. zamiast oczekiwanej treści pojawia się bezsensowny / losowy tekst, jeśli diff i opis wskazują na konkretną, poprawną treść lub zachowanie); **martwy przycisk / brak skutku kliknięcia** przy CTA, które według UI ma coś zrobić.
+1. **Wyznacz obszar zmiany (scope):** na podstawie **ścieżek plików**, **treści diffa** i ewentualnie opisu ustal, *który fragment UI lub zachowania* ten PR dotyczy (konkretny widok, komponent, formularz, sekcja, trasa). Nie zakładaj z góry struktury aplikacji — wnioskuj z diffa i z tego, co widzisz na ekranie.
+2. **Dotrzyj do tego obszaru:** jeśli pierwszy ekran go nie pokazuje, użyj **minimalnej** nawigacji (tyle kliknięć / przejść, ile trzeba), żeby go **odtworzyć**. Nie odwiedzaj kolejnych niepowiązanych ekranów „dla pewności”.
+3. **Testuj intensywnie lokalnie:** w obrębie wyznaczonego obszaru sprawdź dokładniej niż pojedyncze kliknięcie: typowe działanie, oczywiste stany brzegowe *w tym miejscu* (np. ponowne użycie kontrolki, drugi krok w tym samym flow, spójność komunikatów / treści wynikająca z diffa). **Nie** traktuj tego jak smoke testu całego produktu.
+4. **Poza zakresem:** świadomie **pomijasz** duże części aplikacji, które **nie wynikają** z diffa ani ze współdzielonego kodu zmienionego w PR. Pełna regresja całej strony **nie jest** celem tej bramki.
+5. **Zmiany globalne (layout, motyw, nawigacja główna, provider):** wtedy obszar zmiany jest szerszy — nadal skup się na **konsekwencjach tej zmiany** (np. kilka reprezentatywnych widoków, które realnie korzystają ze wspólnego kodu), zamiast enumerować każdy możliwy ekran.
 
-Na końcu oceń **czy powyższe kryteria blokujące są spełnione** (tak / nie) i wypisz zwięźle, co sprawdziłeś.
+## Blokujące (niezaliczony test)
+
+- W obszarze wynikającym z PR/diffa: brak kluczowej treści lub zachowania, które zmiana miała zapewnić; oczywisty błąd lub martwa interakcja **tam**, gdzie diff na to wskazuje.
+- Działanie sprzeczne z intencją wynikającą z diffa / opisu.
+- Wyraźna regresja w tym obszarze (np. zły tekst, brak efektu kliknięcia w zmienionym flow), jeśli nie jest uzasadniona opisem zmiany.
+
+**Nie blokuj** wyłącznie dlatego, że nie sprawdziłeś niepowiązanych części aplikacji.
+
+## Podsumowanie werdyktu
+
+Na końcu oceń, czy kryteria blokujące są spełnione (tak / nie). **Nie** wymagaj od siebie wypisywania listy odwiedzonych podstron, zakładek ani mapy nawigacji — wystarczy zwięzłe stwierdzenie, **jakie zachowanie w obrębie zakresu PR** zweryfikowałeś (bez inwentaryzacji tras).

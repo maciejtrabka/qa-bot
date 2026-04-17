@@ -3,6 +3,7 @@
 !.env.example
 .env.local
 node_modules/
+dist/
 .vercel
 pr-agent.log
 pr-agent-failure.txt
