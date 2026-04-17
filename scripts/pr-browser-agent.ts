@@ -621,6 +621,19 @@ async function main() {
     const qaPrompt = loadQaPrompt();
     await stagehand.init();
     const page = stagehand.context.pages()[0];
+    if (!page) {
+      throw new Error("Stagehand did not provide an initial page.");
+    }
+
+    console.log(`Navigating to BASE_URL: ${BASE_URL}`);
+    await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded", timeoutMs: 30_000 });
+    try {
+      await page.waitForLoadState("networkidle", 5_000);
+    } catch {
+      /* non-fatal — SPA often stays busy briefly */
+    }
+    console.log(`Loaded page: ${page.url()}`);
+
     const prCtx = loadPrContext();
     const prCtxBlock = formatPrContextForPrompt(prCtx);
     if (prCtx) {
