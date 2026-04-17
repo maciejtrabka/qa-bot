@@ -451,7 +451,7 @@ function buildVerdictPrompt(
   }
 
   parts.push(
-    "After your review: did the QA instructions pass for the **PR change region** (not for the entire app)?",
+    "Your task: decide whether the QA instructions pass for the **PR change region** (not for the entire app), then emit ONLY the JSON verdict described below (inside a single ```json fenced block, with no other text).",
     "",
     "## Structured verdict (required)",
     "",
@@ -562,10 +562,13 @@ async function computeVerdict({
     "Visual regressions that only show up in screenshots (invisible or illegible text, hidden/obscured controls, clearly broken layout) are blocking when they fall inside the PR change region.",
     "",
     "### Response format (STRICT)",
-    "Respond with a SINGLE raw JSON object and NOTHING else.",
-    "- No prose before or after.",
-    "- No markdown, no code fences (no ``` and no ```json).",
-    "- No step-by-step thinking in the response. Think silently; output only the final JSON.",
+    "Your entire response must be ONE fenced JSON code block and nothing else:",
+    "```json",
+    "{ …the verdict object… }",
+    "```",
+    "- No prose, headers, or commentary before or after the fenced block.",
+    "- Think silently. Do not narrate steps. Only output the final JSON inside the fence.",
+    "- Emit exactly one ```json fenced block.",
     "",
     "The JSON must exactly match this TypeScript-style shape:",
     "{",
@@ -578,10 +581,7 @@ async function computeVerdict({
     '  "expectedResult"?: string,                // required if qaPassed=false',
     '  "actualResult"?: string                   // required if qaPassed=false',
     "}",
-    "Begin your response with the character { and end it with }. Output valid JSON only.",
   ].join("\n");
-
-  const assistantPrefill = "{";
 
   const result = await generateText({
     model,
@@ -591,11 +591,9 @@ async function computeVerdict({
         role: "user",
         content: [{ type: "text", text: userText }, ...imageParts],
       },
-      {
-        role: "assistant",
-        content: assistantPrefill,
-      },
     ],
+    temperature: 0,
+    maxOutputTokens: 2048,
     maxRetries: 1,
   });
 
@@ -603,9 +601,11 @@ async function computeVerdict({
     `Verdict response: finishReason=${result.finishReason}, length=${(result.text ?? "").length}, usage=${JSON.stringify(result.usage)}`
   );
 
-  let raw = (result.text ?? "").trim();
-  if (raw && !raw.startsWith("{")) {
-    raw = `${assistantPrefill}${raw}`;
+  const raw = (result.text ?? "").trim();
+  try {
+    writeFileSync("pr-agent-verdict-raw.txt", raw, "utf8");
+  } catch {
+    /* best-effort */
   }
   const parsed = parseVerdictJson(raw);
   const validated = verdictSchema.safeParse(parsed);
