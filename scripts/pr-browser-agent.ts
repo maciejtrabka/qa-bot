@@ -561,7 +561,12 @@ async function computeVerdict({
     "You judge only the PR change region based on the PR context, attached screenshots, and the accessibility/page text snapshot.",
     "Visual regressions that only show up in screenshots (invisible or illegible text, hidden/obscured controls, clearly broken layout) are blocking when they fall inside the PR change region.",
     "",
-    "Respond with a SINGLE JSON object and nothing else — no prose, no markdown fences, no commentary before or after.",
+    "### Response format (STRICT)",
+    "Respond with a SINGLE raw JSON object and NOTHING else.",
+    "- No prose before or after.",
+    "- No markdown, no code fences (no ``` and no ```json).",
+    "- No step-by-step thinking in the response. Think silently; output only the final JSON.",
+    "",
     "The JSON must exactly match this TypeScript-style shape:",
     "{",
     '  "qaPassed": boolean,',
@@ -573,8 +578,10 @@ async function computeVerdict({
     '  "expectedResult"?: string,                // required if qaPassed=false',
     '  "actualResult"?: string                   // required if qaPassed=false',
     "}",
-    "Output valid JSON only. Do not wrap it in code fences.",
+    "Begin your response with the character { and end it with }. Output valid JSON only.",
   ].join("\n");
+
+  const assistantPrefill = "{";
 
   const result = await generateText({
     model,
@@ -584,11 +591,22 @@ async function computeVerdict({
         role: "user",
         content: [{ type: "text", text: userText }, ...imageParts],
       },
+      {
+        role: "assistant",
+        content: assistantPrefill,
+      },
     ],
     maxRetries: 1,
   });
 
-  const raw = (result.text ?? "").trim();
+  console.log(
+    `Verdict response: finishReason=${result.finishReason}, length=${(result.text ?? "").length}, usage=${JSON.stringify(result.usage)}`
+  );
+
+  let raw = (result.text ?? "").trim();
+  if (raw && !raw.startsWith("{")) {
+    raw = `${assistantPrefill}${raw}`;
+  }
   const parsed = parseVerdictJson(raw);
   const validated = verdictSchema.safeParse(parsed);
   if (!validated.success) {
