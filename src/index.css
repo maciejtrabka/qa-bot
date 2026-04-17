@@ -276,6 +276,15 @@ body {
   font-style: italic;
 }
 
+.demo-card--fx {
+  border-left: 4px solid #8b7db8;
+  background: color-mix(in srgb, #8b7db8 6%, var(--card));
+}
+
+.demo-card--fx .interactive-placeholder {
+  color: var(--card);
+}
+
 .counter-row {
   display: flex;
   align-items: center;
