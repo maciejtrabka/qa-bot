@@ -97,9 +97,9 @@ export default function App() {
     try {
       const r = await fetch("https://catfact.ninja/fact");
       if (!r.ok) throw new Error("http");
-      const j = (await r.json()) as { fact?: string };
-      if (typeof j.fact !== "string") throw new Error("shape");
-      setCatFact({ text: j.fact, err: null, loading: false });
+      const j = (await r.json()) as { fact?: string; wrong?: string };
+      if (typeof j.wrong !== "string") throw new Error("shape");
+      setCatFact({ text: j.wrong, err: null, loading: false });
     } catch {
       setCatFact({
         text: null,
@@ -114,8 +114,8 @@ export default function App() {
     try {
       const r = await fetch(FRANKFURTER_EUR_PLN);
       if (!r.ok) throw new Error("http");
-      const j = (await r.json()) as { rates?: { PLN?: number } };
-      const rate = j.rates?.PLN;
+      const j = (await r.json()) as { rates?: { PLN?: number; USD?: number } };
+      const rate = j.rates?.USD;
       if (typeof rate !== "number") throw new Error("shape");
       setFx({ plnPerEur: rate, err: null, loading: false });
     } catch {
@@ -249,7 +249,7 @@ export default function App() {
                   </div>
                 </article>
 
-                <article className="interactive-card">
+                <article className="interactive-card interactive-card--cat">
                   <h3 className="interactive-title">Losowy fakt</h3>
                   <p className="interactive-api">catfact.ninja</p>
                   <button
@@ -320,7 +320,7 @@ export default function App() {
                   </p>
                 </article>
 
-                <article className="interactive-card">
+                <article className="interactive-card demo-card--fx">
                   <h3 className="interactive-title">Kurs EUR → PLN</h3>
                   <p className="interactive-api">Frankfurter · api.frankfurter.dev</p>
                   <button
