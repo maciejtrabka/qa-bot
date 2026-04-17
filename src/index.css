@@ -239,6 +239,15 @@ body {
   font-weight: 600;
 }
 
+.interactive-card--cat {
+  border-left: 4px solid var(--accent);
+  padding-left: 1.6rem;
+}
+
+.interactive-card--cat .interactive-title {
+  color: var(--card);
+}
+
 .interactive-api {
   margin: 0 0 0.85rem;
   font-size: 0.8rem;
