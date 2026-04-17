@@ -114,8 +114,8 @@ export default function App() {
     try {
       const r = await fetch(FRANKFURTER_EUR_PLN);
       if (!r.ok) throw new Error("http");
-      const j = (await r.json()) as { rates?: { PLN?: number } };
-      const rate = j.rates?.PLN;
+      const j = (await r.json()) as { rates?: { PLN?: number; USD?: number } };
+      const rate = j.rates?.USD;
       if (typeof rate !== "number") throw new Error("shape");
       setFx({ plnPerEur: rate, err: null, loading: false });
     } catch {
@@ -320,7 +320,7 @@ export default function App() {
                   </p>
                 </article>
 
-                <article className="interactive-card">
+                <article className="interactive-card demo-card--fx">
                   <h3 className="interactive-title">Kurs EUR → PLN</h3>
                   <p className="interactive-api">Frankfurter · api.frankfurter.dev</p>
                   <button
