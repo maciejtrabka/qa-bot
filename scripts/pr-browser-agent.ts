@@ -50,6 +50,27 @@ const promptFile =
 const MAX_INLINE_PROMPT = 48_000;
 const MAX_ACT_PROMPT = 95_000;
 
+const bugSchema = z.object({
+  title: z
+    .string()
+    .describe(
+      "One-line title of this specific bug (e.g. 'Increment (+) button has no effect on click')."
+    ),
+  stepsToReproduce: z
+    .array(z.string())
+    .describe("1–5 imperative steps, each a short sentence (English)."),
+  expectedResult: z
+    .string()
+    .describe("What should happen (English, one or two short sentences)."),
+  actualResult: z
+    .string()
+    .describe("What actually happened (English, one or two short sentences)."),
+  notes: z
+    .string()
+    .nullish()
+    .describe("Optional short non-blocking context for this bug only."),
+});
+
 const verdictSchema = z.object({
   qaPassed: z
     .boolean()
@@ -58,38 +79,36 @@ const verdictSchema = z.object({
     ),
   /** One short English sentence: what behavior you verified in the PR change region (not a list of pages, routes, or nav items visited). */
   whatYouChecked: z.string(),
-  /** Optional extra bullets if qaPassed is false (English; keep each under ~200 chars). */
-  blockingFindings: z.array(z.string()).nullish(),
-  notes: z.string().nullish(),
   /**
-   * When qaPassed is false: short QA report for the GitHub PR comment (English only).
-   * Omit or leave empty when qaPassed is true.
+   * When qaPassed is false: one entry per blocking bug (English, fully structured).
+   * Every blocking finding MUST be represented as its own bug object here —
+   * do not merge multiple bugs into one, and do not leave some bugs only as plain bullets.
    */
-  headline: z
-    .string()
-    .nullish()
-    .describe(
-      "One-line title of the issue when qaPassed is false (e.g. 'Primary CTA has no effect on click')."
-    ),
-  stepsToReproduce: z
-    .array(z.string())
-    .nullish()
-    .describe(
-      "When qaPassed is false: 1–5 imperative steps, each a short sentence (English)."
-    ),
-  expectedResult: z
-    .string()
-    .nullish()
-    .describe(
-      "When qaPassed is false: what should happen (English, one or two short sentences)."
-    ),
-  actualResult: z
-    .string()
-    .nullish()
-    .describe(
-      "When qaPassed is false: what actually happened (English, one or two short sentences)."
-    ),
+  bugs: z.array(bugSchema).nullish(),
+  /** Optional non-blocking context that is not tied to a specific bug (English). */
+  notes: z.string().nullish(),
+
+  // ----- Legacy fields (back-compat with older model responses; migrated at render time) -----
+  /** @deprecated — prefer bugs[].title. Retained so older responses still render. */
+  headline: z.string().nullish(),
+  /** @deprecated — prefer bugs[].stepsToReproduce. */
+  stepsToReproduce: z.array(z.string()).nullish(),
+  /** @deprecated — prefer bugs[].expectedResult. */
+  expectedResult: z.string().nullish(),
+  /** @deprecated — prefer bugs[].actualResult. */
+  actualResult: z.string().nullish(),
+  /** @deprecated — prefer bugs[]. */
+  blockingFindings: z.array(z.string()).nullish(),
 });
+
+type Bug = z.infer<typeof bugSchema>;
+type Verdict = z.infer<typeof verdictSchema>;
+
+type QaEnvironment = {
+  previewUrl: string;
+  userAgent: string;
+  runTimeUtc: string;
+};
 
 type PrContextMaterial = {
   title: string;
@@ -185,98 +204,176 @@ function writePrFailureComment(markdown: string): void {
   writeFileSync(prAgentPrCommentPath, out, "utf8");
 }
 
-function formatQaVerdictComment(
-  verdict: z.infer<typeof verdictSchema>
-): string {
-  const findings = (verdict.blockingFindings?.filter((s) => s?.trim()) ?? []).slice(
-    0,
-    4
-  );
+const DEFAULT_EXPECTED =
+  "Per the QA instructions: behavior in the PR change region matches intent; interactions there work as expected where the change applies.";
+
+/**
+ * Normalize a verdict into a list of fully-structured bugs. Prefers the new
+ * `bugs[]` field; falls back to legacy single-bug fields + `blockingFindings`
+ * so older model responses still render cleanly.
+ */
+function collectBugs(verdict: Verdict): Bug[] {
+  const fromBugs = (verdict.bugs ?? [])
+    .map((b) => ({
+      title: b.title?.trim() ?? "",
+      stepsToReproduce: (b.stepsToReproduce ?? [])
+        .map((s) => s.trim())
+        .filter(Boolean),
+      expectedResult: b.expectedResult?.trim() ?? "",
+      actualResult: b.actualResult?.trim() ?? "",
+      notes: b.notes?.trim() || undefined,
+    }))
+    .filter((b) => b.title || b.actualResult || b.stepsToReproduce.length > 0);
+
+  if (fromBugs.length > 0) {
+    return fromBugs;
+  }
+
+  const legacyFindings = (verdict.blockingFindings ?? [])
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const legacyTitle =
+    verdict.headline?.trim() ||
+    legacyFindings[0] ||
+    trimForPrComment(verdict.whatYouChecked, 220);
+
+  const legacySteps = (verdict.stepsToReproduce ?? [])
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const legacyExpected = verdict.expectedResult?.trim() || "";
+  const legacyActual =
+    verdict.actualResult?.trim() ||
+    legacyFindings.find((f) => f !== legacyTitle) ||
+    legacyFindings[0] ||
+    verdict.whatYouChecked.trim();
+
+  const primary: Bug = {
+    title: legacyTitle,
+    stepsToReproduce: legacySteps,
+    expectedResult: legacyExpected,
+    actualResult: legacyActual,
+  };
+
+  const extras: Bug[] = legacyFindings
+    .filter((f) => f !== legacyTitle && f !== legacyActual)
+    .map((f) => ({
+      title: trimForPrComment(f, 120),
+      stepsToReproduce: [],
+      expectedResult: "",
+      actualResult: f,
+    }));
+
+  return [primary, ...extras];
+}
+
+/** Double horizontal rule with blank line in between (visually stronger separator). */
+const DOUBLE_HR = ["---", "", "---", ""];
+
+function renderBugSection(bug: Bug, index: number): string[] {
+  const title = bug.title || `Blocking issue #${index + 1}`;
+  const steps =
+    bug.stepsToReproduce.length > 0
+      ? bug.stepsToReproduce.slice(0, 5)
+      : [
+          "Open the preview at the workflow `BASE_URL`.",
+          "Navigate only as needed to reach the UI region affected by the PR.",
+          "Exercise the relevant controls there and observe results.",
+        ];
+  const expected = bug.expectedResult || DEFAULT_EXPECTED;
+  const actual = trimForPrComment(bug.actualResult || "(not reported)", 520);
+
+  const out: string[] = [
+    `### Bug ${index + 1}: ${trimForPrComment(title, 200)}`,
+    "",
+    "**Steps to reproduce**",
+    "",
+    ...steps.map((s, i) => `${i + 1}. ${trimForPrComment(s, 320)}`),
+    "",
+    "**Expected result**",
+    "",
+    expected,
+    "",
+    "**Actual result**",
+    "",
+    actual,
+    "",
+  ];
+
+  if (bug.notes) {
+    out.push("**Notes**", "", trimForPrComment(bug.notes, 400), "");
+  }
+
+  return out;
+}
+
+function renderEnvironmentSection(env: QaEnvironment): string[] {
+  return [
+    "### Environment",
+    "",
+    `- **Preview URL:** ${env.previewUrl}`,
+    `- **Browser:** ${trimForPrComment(env.userAgent || "(unknown)", 240)}`,
+    `- **Run time (UTC):** ${env.runTimeUtc}`,
+    "",
+  ];
+}
+
+function formatQaVerdictComment(verdict: Verdict, env: QaEnvironment): string {
+  const bugs = collectBugs(verdict);
   const notes = verdict.notes?.trim()
     ? trimForPrComment(verdict.notes.trim(), 280)
     : "";
-
-  const headline =
-    verdict.headline?.trim() ||
-    findings[0]?.trim() ||
-    trimForPrComment(verdict.whatYouChecked, 220);
-
-  const steps = (verdict.stepsToReproduce ?? [])
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .slice(0, 5);
-
-  const defaultExpected =
-    "Per the QA instructions: behavior in the PR change region matches intent; interactions there work as expected where the change applies.";
-
-  const expected = verdict.expectedResult?.trim() || defaultExpected;
-
-  const actualRaw =
-    verdict.actualResult?.trim() ||
-    findings.find((f) => f.trim() && f.trim() !== headline.trim())?.trim() ||
-    findings[0]?.trim() ||
-    verdict.whatYouChecked.trim();
-
-  const actual = trimForPrComment(actualRaw, 520);
 
   const parts: string[] = [
     "### PR gate failed",
     "",
     "`pr_browser_agent` — **`qaPassed: false`**",
     "",
-    "#### Summary",
-    "",
-    headline,
+    "#### Bugs found",
     "",
   ];
 
-  if (steps.length) {
-    parts.push("#### Steps to reproduce", "");
-    steps.forEach((step, i) => {
-      parts.push(`${i + 1}. ${trimForPrComment(step, 320)}`);
-    });
-    parts.push("");
+  if (bugs.length > 0) {
+    for (const b of bugs) {
+      const t = b.title || "(untitled issue)";
+      parts.push(`- ${trimForPrComment(t, 180)}`);
+    }
   } else {
     parts.push(
-      "#### Steps to reproduce",
-      "",
-      "1. Open the preview at the workflow `BASE_URL`.",
-      "2. Navigate only as needed to reach the UI region affected by the PR.",
-      "3. Exercise the relevant controls there and observe results.",
-      ""
+      `- ${trimForPrComment(verdict.whatYouChecked || "Unspecified blocking issue", 180)}`
     );
   }
+  parts.push("");
 
-  parts.push(
-    "#### Expected result",
-    "",
-    expected,
-    "",
-    "#### Actual result",
-    "",
-    actual,
-    ""
-  );
+  bugs.forEach((bug, i) => {
+    parts.push(...DOUBLE_HR, ...renderBugSection(bug, i));
+  });
 
-  const extraFindings = findings.filter(
-    (f) => f.trim() && f.trim() !== headline.trim() && f.trim() !== actualRaw.trim()
-  );
-  if (extraFindings.length) {
-    parts.push(
-      "#### Additional blocking notes",
-      "",
-      ...extraFindings.map((f) => `- ${trimForPrComment(f, 260)}`),
-      ""
-    );
-  }
+  parts.push(...DOUBLE_HR, ...renderEnvironmentSection(env));
 
   if (notes) {
-    parts.push("#### Notes", "", notes, "");
+    parts.push(...DOUBLE_HR, "### Notes", "", notes, "");
   }
 
   parts.push("---", "", "<sub>Full logs: workflow artifact **pr-agent-logs**.</sub>");
 
   return parts.join("\n");
+}
+
+async function safeGetUserAgent(page: unknown): Promise<string> {
+  try {
+    const p = page as {
+      evaluate?: (fn: () => string) => Promise<string>;
+    };
+    if (typeof p.evaluate === "function") {
+      const ua = await p.evaluate(() => navigator.userAgent);
+      if (typeof ua === "string" && ua.trim()) return ua.trim();
+    }
+  } catch (e) {
+    console.warn("safeGetUserAgent failed:", e);
+  }
+  return "(unknown — could not read navigator.userAgent)";
 }
 
 function firstMeaningfulFailureLine(detail: string): string {
@@ -458,14 +555,13 @@ function buildVerdictPrompt(
     "- **All strings must be English** (the PR comment is English-only).",
     "- **qaPassed**: boolean.",
     "- **whatYouChecked**: one short sentence — **what behavior or visual aspect** you verified in the scope of the PR (do **not** list visited pages, routes, or navigation items).",
-    "- If **qaPassed is false**, you MUST also fill:",
-    "  - **headline**: one-line title of the blocking issue.",
-    "  - **stepsToReproduce**: 1–5 short imperative steps (strings).",
-    "  - **expectedResult**: what should happen.",
-    "  - **actualResult**: what happened instead.",
-    "  - **blockingFindings**: optional 1–3 short bullets (same blocking points, no duplication of paragraphs).",
-    "- If **qaPassed is true**, leave headline/stepsToReproduce/expectedResult/actualResult empty or omit them.",
-    "- **notes**: optional, English, non-blocking context only."
+    "- If **qaPassed is false**, you MUST fill **bugs** with one entry per blocking issue:",
+    "  - Each bug is a separate object with **title**, **stepsToReproduce** (1–5 imperative steps), **expectedResult**, **actualResult**, and optional **notes**.",
+    "  - **Every** blocking finding (visual and functional) must be its own object in `bugs[]`. Do **not** merge two bugs into one. Do **not** leave a second bug only as a plain bullet or as free text inside `notes`.",
+    "  - Titles must be short and concrete (one line each).",
+    "- If **qaPassed is true**, leave `bugs` empty or omit it.",
+    "- **notes**: optional, English, non-blocking context that does not belong to any specific bug.",
+    "- Do not use the legacy top-level fields (`headline`, `stepsToReproduce`, `expectedResult`, `actualResult`, `blockingFindings`) — they exist only for backwards compatibility and will be dropped."
   );
 
   return parts.join("\n");
@@ -574,13 +670,20 @@ async function computeVerdict({
     "{",
     '  "qaPassed": boolean,',
     '  "whatYouChecked": string,                 // one short English sentence',
-    '  "blockingFindings"?: string[],            // optional 1-3 bullets (English)',
-    '  "notes"?: string,                         // optional non-blocking context',
-    '  "headline"?: string,                      // required if qaPassed=false',
-    '  "stepsToReproduce"?: string[],            // required if qaPassed=false (1-5 items)',
-    '  "expectedResult"?: string,                // required if qaPassed=false',
-    '  "actualResult"?: string                   // required if qaPassed=false',
+    '  "bugs"?: Array<{                          // required and non-empty if qaPassed=false',
+    '    "title": string,                         //   one-line English title of THIS bug',
+    '    "stepsToReproduce": string[],            //   1-5 imperative steps',
+    '    "expectedResult": string,',
+    '    "actualResult": string,',
+    '    "notes"?: string                         //   optional, scoped to this bug only',
+    "  }>,",
+    '  "notes"?: string                          // optional non-blocking context (not per bug)',
     "}",
+    "",
+    "Rules for bugs[]:",
+    "- Report EVERY blocking issue (functional AND visual) as its own object.",
+    "- Do NOT combine two different bugs into a single object.",
+    "- Do NOT use the legacy top-level `headline` / `stepsToReproduce` / `expectedResult` / `actualResult` / `blockingFindings` fields.",
   ].join("\n");
 
   const result = await generateText({
@@ -740,8 +843,15 @@ async function main() {
     console.log("LLM verdict:", JSON.stringify(verdict, null, 2));
 
     if (!verdict.qaPassed) {
-      writePrFailureComment(formatQaVerdictComment(verdict));
+      const env: QaEnvironment = {
+        previewUrl: BASE_URL,
+        userAgent: await safeGetUserAgent(page),
+        runTimeUtc: new Date().toISOString(),
+      };
+      writePrFailureComment(formatQaVerdictComment(verdict, env));
+      const firstBugTitle = verdict.bugs?.find((b) => b?.title?.trim())?.title?.trim();
       const hint =
+        firstBugTitle ??
         verdict.blockingFindings?.find((s) => s?.trim())?.trim() ??
         verdict.whatYouChecked.slice(0, 160);
       throw new Error(`QA gate failed (qaPassed=false): ${hint}`);
