@@ -233,6 +233,17 @@ body {
   border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
+/* Accent only on the cat-fact demo card (Start). */
+.demo-card--cat {
+  border-left: 4px solid color-mix(in srgb, var(--accent) 55%, #7a9a8a);
+  background: color-mix(in srgb, var(--accent-soft) 65%, var(--card));
+}
+
+/* Error line uses card fill — text is in the DOM/a11y tree but blends into the panel on a screenshot. */
+.demo-card--cat [data-testid="cat-fact-output"] .interactive-msg-error {
+  color: var(--card);
+}
+
 .interactive-title {
   margin: 0 0 0.2rem;
   font-size: 1.05rem;
