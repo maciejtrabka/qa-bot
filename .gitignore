@@ -8,6 +8,8 @@ dist/
 pr-agent.log
 pr-agent-failure.txt
 pr-agent-pr-comment.md
+pr-agent-screenshot-viewport.png
+pr-agent-screenshot-fullpage.png
 pr-context/
 test-results/
 AGENTS.md

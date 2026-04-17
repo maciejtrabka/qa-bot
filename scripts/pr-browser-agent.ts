@@ -1,11 +1,18 @@
 /**
  * PR browser agent: Stagehand (LOCAL) + OpenRouter. Optional PR context (pr-context/).
  * QA steps and pass/fail criteria come from a prompt file or PR_AGENT_PROMPT env.
- * Merge gate: structured extract — qaPassed must be true.
+ * Merge gate: structured verdict — qaPassed must be true.
+ *
+ * Verdict step uses a vision-capable LLM call by default (screenshots + a11y tree +
+ * PR context), so the agent also catches visual-only regressions that the DOM tree
+ * alone would miss. Disable with PR_AGENT_VISION=0 to fall back to Stagehand's
+ * text-only `extract()`.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Stagehand } from "@browserbasehq/stagehand";
+import { generateObject } from "ai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { z } from "zod";
 
 const BASE_URL = (process.env.BASE_URL ?? "http://127.0.0.1:9333").replace(
@@ -14,8 +21,17 @@ const BASE_URL = (process.env.BASE_URL ?? "http://127.0.0.1:9333").replace(
 );
 const apiKey = process.env.OPENROUTER_API_KEY?.trim();
 const modelName =
-  process.env.STAGEHAND_MODEL?.trim() ||
-  "meta-llama/llama-3.3-70b-instruct:free";
+  process.env.STAGEHAND_MODEL?.trim() || "anthropic/claude-sonnet-4.6";
+
+const visionEnabled =
+  (process.env.PR_AGENT_VISION ?? "1").trim().toLowerCase() !== "0";
+
+const viewportScreenshotPath =
+  process.env.PR_AGENT_SCREENSHOT_VIEWPORT?.trim() ||
+  "pr-agent-screenshot-viewport.png";
+const fullPageScreenshotPath =
+  process.env.PR_AGENT_SCREENSHOT_FULLPAGE?.trim() ||
+  "pr-agent-screenshot-fullpage.png";
 
 const failureLogPath = process.env.PR_AGENT_FAILURE_LOG ?? "pr-agent-failure.txt";
 
@@ -391,6 +407,174 @@ function buildActInstruction(
   return core;
 }
 
+function buildVerdictPrompt(
+  prCtxBlock: string,
+  qaPrompt: string,
+  pageText: string | undefined,
+  hasScreenshots: boolean
+): string {
+  const parts: string[] = [
+    prCtxBlock,
+    "",
+    "## QA instructions (same as for actions)",
+    qaPrompt,
+    "",
+  ];
+
+  if (hasScreenshots) {
+    parts.push(
+      "## Visual evidence",
+      "",
+      "Screenshots of the live preview page are attached below this text (viewport and/or full-page).",
+      "",
+      "**Use the screenshots as the primary source of truth** for anything visual: readable text, visible controls, color contrast, overlapping elements, empty areas where content should appear, hidden/invisible text or buttons (e.g., text with the same color as its background). The DOM/a11y tree cannot express these things.",
+      "",
+      "Also consider the accessibility-tree text snapshot below for labels, values, and structural context.",
+      ""
+    );
+  } else {
+    parts.push(
+      "## Evidence",
+      "",
+      "No screenshots are attached for this run — judge from the PR context and the accessibility/page text snapshot only.",
+      ""
+    );
+  }
+
+  if (pageText && pageText.trim().length > 0) {
+    const MAX_PAGE_TEXT = 20_000;
+    const snippet =
+      pageText.length > MAX_PAGE_TEXT
+        ? `${pageText.slice(0, MAX_PAGE_TEXT)}\n\n[… page text truncated …]`
+        : pageText;
+    parts.push("## Accessibility / page text snapshot", "", "```", snippet, "```", "");
+  }
+
+  parts.push(
+    "After your review: did the QA instructions pass for the **PR change region** (not for the entire app)?",
+    "",
+    "## Structured verdict (required)",
+    "",
+    "- **All strings must be English** (the PR comment is English-only).",
+    "- **qaPassed**: boolean.",
+    "- **whatYouChecked**: one short sentence — **what behavior or visual aspect** you verified in the scope of the PR (do **not** list visited pages, routes, or navigation items).",
+    "- If **qaPassed is false**, you MUST also fill:",
+    "  - **headline**: one-line title of the blocking issue.",
+    "  - **stepsToReproduce**: 1–5 short imperative steps (strings).",
+    "  - **expectedResult**: what should happen.",
+    "  - **actualResult**: what happened instead.",
+    "  - **blockingFindings**: optional 1–3 short bullets (same blocking points, no duplication of paragraphs).",
+    "- If **qaPassed is true**, leave headline/stepsToReproduce/expectedResult/actualResult empty or omit them.",
+    "- **notes**: optional, English, non-blocking context only."
+  );
+
+  return parts.join("\n");
+}
+
+async function computeVerdict({
+  page,
+  prCtx,
+  qaPrompt,
+}: {
+  page: { screenshot(options?: { fullPage?: boolean; type?: "png" | "jpeg" }): Promise<Buffer> };
+  prCtx: PrContextMaterial | null;
+  qaPrompt: string;
+}): Promise<z.infer<typeof verdictSchema>> {
+  const prCtxBlock = formatPrContextForPrompt(prCtx);
+
+  let viewportPng: Buffer | null = null;
+  let fullPagePng: Buffer | null = null;
+  try {
+    viewportPng = await page.screenshot({ type: "png" });
+    writeFileSync(viewportScreenshotPath, viewportPng);
+    console.log(
+      `Saved viewport screenshot to ${viewportScreenshotPath} (${viewportPng.byteLength} bytes).`
+    );
+  } catch (e) {
+    console.warn("Viewport screenshot failed:", e);
+  }
+  try {
+    fullPagePng = await page.screenshot({ fullPage: true, type: "png" });
+    writeFileSync(fullPageScreenshotPath, fullPagePng);
+    console.log(
+      `Saved full-page screenshot to ${fullPageScreenshotPath} (${fullPagePng.byteLength} bytes).`
+    );
+  } catch (e) {
+    console.warn("Full-page screenshot failed:", e);
+  }
+
+  if (!visionEnabled || (!viewportPng && !fullPagePng)) {
+    if (!visionEnabled) {
+      console.log("Vision disabled via PR_AGENT_VISION=0 — using Stagehand text extract.");
+    } else {
+      console.warn("No screenshots available — falling back to Stagehand text extract.");
+    }
+    const stagehand = globalStagehand;
+    if (!stagehand) {
+      throw new Error("Stagehand instance unavailable for text-only fallback.");
+    }
+    return stagehand.extract(
+      buildVerdictPrompt(prCtxBlock, qaPrompt, undefined, false),
+      verdictSchema
+    );
+  }
+
+  let pageText: string | undefined;
+  try {
+    const textSnap = await globalStagehand!.extract();
+    pageText = typeof textSnap?.pageText === "string" ? textSnap.pageText : undefined;
+  } catch (e) {
+    console.warn("Extracting a11y pageText failed:", e);
+  }
+
+  const referer =
+    process.env.OPENROUTER_HTTP_REFERER?.trim() ||
+    "https://github.com/maciejtrabka/qa-bot";
+
+  const openrouter = createOpenAICompatible({
+    name: "openrouter",
+    baseURL: "https://openrouter.ai/api/v1",
+    apiKey: apiKey!,
+    headers: {
+      "HTTP-Referer": referer,
+      "X-Title": "qa-bot-pr-browser-agent",
+    },
+  });
+
+  const model = openrouter.chatModel(modelName);
+
+  const userText = buildVerdictPrompt(prCtxBlock, qaPrompt, pageText, true);
+  const imageParts: Array<{ type: "image"; image: Uint8Array; mediaType: string }> = [];
+  if (viewportPng) {
+    imageParts.push({ type: "image", image: viewportPng, mediaType: "image/png" });
+  }
+  if (fullPagePng) {
+    imageParts.push({ type: "image", image: fullPagePng, mediaType: "image/png" });
+  }
+
+  console.log(
+    `Vision verdict: calling ${modelName} with ${imageParts.length} screenshot(s), prompt ${userText.length} chars.`
+  );
+
+  const result = await generateObject({
+    model,
+    schema: verdictSchema,
+    system:
+      "You are a senior QA engineer reviewing a pull request preview build. You judge only the PR change region based on the PR context, attached screenshots, and the accessibility/page text snapshot. Visual regressions that only show up in screenshots (invisible or illegible text, hidden/obscured controls, clearly broken layout) are blocking when they fall inside the PR change region. Return the structured verdict.",
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: userText }, ...imageParts],
+      },
+    ],
+    maxRetries: 1,
+  });
+
+  return result.object;
+}
+
+let globalStagehand: Stagehand | null = null;
+
 async function main() {
   if (!apiKey) {
     const m = "Missing OPENROUTER_API_KEY (required for Stagehand LLM steps in CI).";
@@ -431,6 +615,7 @@ async function main() {
       ],
     },
   });
+  globalStagehand = stagehand;
 
   try {
     const qaPrompt = loadQaPrompt();
@@ -453,31 +638,11 @@ async function main() {
     const actText = buildActInstruction(prCtxBlock, qaPrompt, origin);
     await stagehand.act(actText);
 
-    const verdict = await stagehand.extract(
-      [
-        formatPrContextForPrompt(prCtx),
-        "",
-        "## QA instructions (same as for actions)",
-        qaPrompt,
-        "",
-        "After your exploration: did the QA instructions pass for the **PR change region** (not for the entire app)?",
-        "",
-        "## Structured verdict (required)",
-        "",
-        "- **All strings must be English** (the PR comment is English-only).",
-        "- **qaPassed**: boolean.",
-        "- **whatYouChecked**: one short sentence — **what behavior** you verified in the scope of the PR (do **not** list visited pages, routes, or navigation items).",
-        "- If **qaPassed is false**, you MUST also fill:",
-        "  - **headline**: one-line title of the blocking issue.",
-        "  - **stepsToReproduce**: 1–5 short imperative steps (strings).",
-        "  - **expectedResult**: what should happen.",
-        "  - **actualResult**: what happened instead.",
-        "  - **blockingFindings**: optional 1–3 short bullets (same blocking points, no duplication of paragraphs).",
-        "- If **qaPassed is true**, leave headline/stepsToReproduce/expectedResult/actualResult empty or omit them.",
-        "- **notes**: optional, English, non-blocking context only.",
-      ].join("\n"),
-      verdictSchema
-    );
+    const verdict = await computeVerdict({
+      page,
+      prCtx,
+      qaPrompt,
+    });
 
     console.log("LLM verdict:", JSON.stringify(verdict, null, 2));
 

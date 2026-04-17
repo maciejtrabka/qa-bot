@@ -10,9 +10,11 @@ Przy **pull requeście do `main`** workflow **„PR browser agent”** zapisuje 
 - zmienna repozytorium **`PR_AGENT_QA_PROMPT`** (treść trafia do env `PR_AGENT_PROMPT` i **nadpisuje** plik), albo
 - przy **`workflow_dispatch`**: pole **prompt_file** (ścieżka do innego pliku markdown z promptem).
 
-Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR: tytuł, opis, pliki, diff). Krok **`extract`** zwraca strukturalny werdykt **`qaPassed`** — jeśli model ustawi `false` (albo wystąpi błąd), job **fail** → możliwa **blokada merge** + **komentarz na PR** (plik `pr-agent-pr-comment.md` z krótkim raportem po angielsku: *Summary*, *Steps to reproduce*, *Expected / Actual result*; bez wklejania całego prompta ani diffa).
+Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR: tytuł, opis, pliki, diff) używając **drzewa dostępności (a11y) / DOM** jako źródła prawdy. Krok werdyktu robi **dwa screenshoty** gotowej strony (viewport + full-page) i wysyła je razem z promptem QA oraz a11y snapshotem do modelu wizyjnego — zwraca strukturalny werdykt **`qaPassed`**. Dzięki temu agent łapie też **regresje czysto wizualne** (np. tekst w kolorze tła, nachodzące elementy, ukryty przycisk), których sam DOM nie zdradzi. Screenshoty trafiają do artefaktu **`pr-agent-logs`** (dostępne w UI Actions).
 
-**Uwaga:** bramka opiera się wyłącznie na **eksploracji strony przez agenta LLM** zgodnie z promptem — nie ma osobnego deterministycznego testu DOM przed `act`. Jeśli chcesz wyłapać np. martwy przycisk przy opisie PR „tylko styl”, doprecyzuj **`pr-agent-qa-prompt.md`** (lub **`PR_AGENT_QA_PROMPT`**), żeby model musiał zweryfikować CTA i zachowanie względem diffa.
+Jeśli model ustawi `qaPassed: false` (albo wystąpi błąd), job **fail** → możliwa **blokada merge** + **komentarz na PR** (plik `pr-agent-pr-comment.md` z krótkim raportem po angielsku: *Summary*, *Steps to reproduce*, *Expected / Actual result*; bez wklejania całego prompta ani diffa).
+
+**Uwaga:** bramka opiera się wyłącznie na **eksploracji strony przez agenta LLM** zgodnie z promptem — nie ma osobnego deterministycznego testu DOM przed `act`. Jeśli chcesz wyłączyć krok wizyjny (np. dla modelu bez vision), ustaw **`PR_AGENT_VISION=0`** — wtedy werdykt idzie przez Stagehand `extract()` (tekst-only).
 
 **Zakres testów:** domyślny **[`pr-agent-qa-prompt.md`](../pr-agent-qa-prompt.md)** jest **uniwersalny** (bez opisu konkretnej witryny): agent ma testować **intensywnie okolicę zmiany z PR** (pliki + diff), a **nie** robić pełnej regresji całej aplikacji. Skrypt [`scripts/pr-browser-agent.ts`](../scripts/pr-browser-agent.ts) dopina to w `act` / `extract` (m.in. `whatYouChecked` bez listy odwiedzonych tras).
 
@@ -30,9 +32,10 @@ Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR: tytuł, opis, pliki
 
 | Nazwa | Gdzie | Opis |
 | ----- | ----- | ----- |
-| `OPENROUTER_API_KEY` | GitHub → Settings → Secrets and variables → Actions | Wymagane do wywołań LLM (Stagehand). |
-| `STAGEHAND_MODEL` | (Opcjonalnie) Actions **Variables** | Pełny slug OpenRouter, np. `meta-llama/llama-3.3-70b-instruct:free` (darmowy, bywa **429**). Puste = domyślny model w skrypcie. |
+| `OPENROUTER_API_KEY` | GitHub → Settings → Secrets and variables → Actions | Wymagane do wywołań LLM (Stagehand + werdykt wizyjny). |
+| `STAGEHAND_MODEL` | (Opcjonalnie) Actions **Variables** | Pełny slug OpenRouter. Domyślnie `anthropic/claude-sonnet-4.6` (obsługuje vision — wymagane do werdyktu ze screenshotami). Model tekst-only (np. `meta-llama/llama-3.3-70b-instruct:free`) zadziała **tylko** przy `PR_AGENT_VISION=0`. |
 | `PR_AGENT_QA_PROMPT` | (Opcjonalnie) Actions **Variables** | Pełny tekst prompta QA — jeśli ustawiony, **zastępuje** plik `pr-agent-qa-prompt.md`. |
+| `PR_AGENT_VISION` | (Opcjonalnie) Actions **Variables** lub env lokalny | `0` wyłącza werdykt wizyjny (fallback do `stagehand.extract()`). Domyślnie włączone. |
 
 **PR z forka** zwykle **nie** dostaje sekretów — MVP zakłada PR-y **z tego samego repozytorium**.
 
@@ -89,4 +92,4 @@ Opcjonalnie lokalnie: `PR_AGENT_PROMPT_FILE=inny-plik.md` albo `PR_AGENT_PROMPT=
 ## Uwagi
 
 - Node na runnerze: **20.x** (ustawione w workflow; Stagehand wymaga współczesnego Node — trzymaj się wersji z joba, unikaj eksperymentalnych majorów na CI).
-- Logi przy błędzie: artifact **`pr-agent-logs`** (`pr-agent.log`, `pr-agent-failure.txt`, opcjonalnie `pr-agent-pr-comment.md` — ta sama treść co komentarz na PR).
+- Logi przy błędzie: artifact **`pr-agent-logs`** (`pr-agent.log`, `pr-agent-failure.txt`, opcjonalnie `pr-agent-pr-comment.md` — ta sama treść co komentarz na PR, plus screenshoty `pr-agent-screenshot-viewport.png` / `pr-agent-screenshot-fullpage.png`).

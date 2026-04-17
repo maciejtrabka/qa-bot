@@ -104,7 +104,10 @@ jobs:
             pr-agent.log
             pr-agent-failure.txt
             pr-agent-pr-comment.md
+            pr-agent-screenshot-viewport.png
+            pr-agent-screenshot-fullpage.png
           retention-days: 7
+          if-no-files-found: ignore
 
       - name: Comment on PR when agent failed
         if: failure() && github.event_name == 'pull_request'

@@ -14,11 +14,13 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@ai-sdk/openai-compatible": "^1.0.36",
     "@browserbasehq/stagehand": "^3.2.1",
     "@types/node": "^25.0.3",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "ai": "^5.0.179",
     "deepmerge": "^4.3.1",
     "patch-package": "^8.0.1",
     "playwright": "^1.59.1",
