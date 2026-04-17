@@ -108,9 +108,9 @@ jobs:
           set -euo pipefail
           if [ ! -f pr-agent-pr-comment.md ]; then
             printf '%s\n' \
-              "### Agent PR gate — niepowodzenie" \
+              "### PR gate failed" \
               "" \
-              "Brak pliku \`pr-agent-pr-comment.md\` — zajrzyj do artefaktu **pr-agent-logs** w tym runie." \
+              "Missing \`pr-agent-pr-comment.md\` — see workflow artifact **pr-agent-logs** for this run." \
               "" \
               "<sub>Check: \`pr_browser_agent\` (workflow *PR browser agent*).</sub>" \
               > pr-agent-pr-comment.md

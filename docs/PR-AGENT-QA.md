@@ -10,7 +10,7 @@ Przy **pull requeście do `main`** workflow **„PR browser agent”** zapisuje 
 - zmienna repozytorium **`PR_AGENT_QA_PROMPT`** (treść trafia do env `PR_AGENT_PROMPT` i **nadpisuje** plik), albo
 - przy **`workflow_dispatch`**: pole **prompt_file** (ścieżka do innego pliku markdown z promptem).
 
-Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR: tytuł, opis, pliki, diff). Krok **`extract`** zwraca strukturalny werdykt **`qaPassed`** — jeśli model ustawi `false` (albo wystąpi błąd), job **fail** → możliwa **blokada merge** + **krótki komentarz na PR** (treść z pliku `pr-agent-pr-comment.md` generowanego przez skrypt; bez wklejania całego prompta ani diffa).
+Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR: tytuł, opis, pliki, diff). Krok **`extract`** zwraca strukturalny werdykt **`qaPassed`** — jeśli model ustawi `false` (albo wystąpi błąd), job **fail** → możliwa **blokada merge** + **komentarz na PR** (plik `pr-agent-pr-comment.md` z krótkim raportem po angielsku: *Summary*, *Steps to reproduce*, *Expected / Actual result*; bez wklejania całego prompta ani diffa).
 
 **Uwaga:** bramka opiera się wyłącznie na **eksploracji strony przez agenta LLM** zgodnie z promptem — nie ma osobnego deterministycznego testu DOM przed `act`. Jeśli chcesz wyłapać np. martwy przycisk przy opisie PR „tylko styl”, doprecyzuj **`pr-agent-qa-prompt.md`** (lub **`PR_AGENT_QA_PROMPT`**), żeby model musiał zweryfikować CTA i zachowanie względem diffa.
 

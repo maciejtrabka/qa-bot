@@ -40,9 +40,39 @@ const verdictSchema = z.object({
     .describe(
       "true only if every blocking criterion from the QA instructions is satisfied"
     ),
+  /** Short line for console / fallback (English). */
   whatYouChecked: z.string(),
+  /** Optional extra bullets if qaPassed is false (English; keep each under ~200 chars). */
   blockingFindings: z.array(z.string()).nullish(),
   notes: z.string().nullish(),
+  /**
+   * When qaPassed is false: short QA report for the GitHub PR comment (English only).
+   * Omit or leave empty when qaPassed is true.
+   */
+  headline: z
+    .string()
+    .nullish()
+    .describe(
+      "One-line title of the issue when qaPassed is false (e.g. 'Primary CTA has no effect on click')."
+    ),
+  stepsToReproduce: z
+    .array(z.string())
+    .nullish()
+    .describe(
+      "When qaPassed is false: 1–5 imperative steps, each a short sentence (English)."
+    ),
+  expectedResult: z
+    .string()
+    .nullish()
+    .describe(
+      "When qaPassed is false: what should happen (English, one or two short sentences)."
+    ),
+  actualResult: z
+    .string()
+    .nullish()
+    .describe(
+      "When qaPassed is false: what actually happened (English, one or two short sentences)."
+    ),
 });
 
 type PrContextMaterial = {
@@ -133,54 +163,101 @@ function trimForPrComment(s: string, max: number): string {
 }
 
 function writePrFailureComment(markdown: string): void {
-  const max = 8000;
+  const max = 6000;
   const out =
-    markdown.length > max ? `${markdown.slice(0, max)}\n\n[obcięto]` : markdown;
+    markdown.length > max ? `${markdown.slice(0, max)}\n\n[truncated]` : markdown;
   writeFileSync(prAgentPrCommentPath, out, "utf8");
 }
 
 function formatQaVerdictComment(
   verdict: z.infer<typeof verdictSchema>
 ): string {
-  const checked = trimForPrComment(verdict.whatYouChecked, 320);
   const findings = (verdict.blockingFindings?.filter((s) => s?.trim()) ?? []).slice(
     0,
-    6
+    4
   );
   const notes = verdict.notes?.trim()
-    ? trimForPrComment(verdict.notes.trim(), 400)
+    ? trimForPrComment(verdict.notes.trim(), 280)
     : "";
 
-  const parts = [
-    "### Agent PR gate — niepowodzenie",
+  const headline =
+    verdict.headline?.trim() ||
+    findings[0]?.trim() ||
+    trimForPrComment(verdict.whatYouChecked, 220);
+
+  const steps = (verdict.stepsToReproduce ?? [])
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+
+  const defaultExpected =
+    "Per the QA instructions and the UI, the primary CTA should produce a clear observable effect.";
+
+  const expected = verdict.expectedResult?.trim() || defaultExpected;
+
+  const actualRaw =
+    verdict.actualResult?.trim() ||
+    findings.find((f) => f.trim() && f.trim() !== headline.trim())?.trim() ||
+    findings[0]?.trim() ||
+    verdict.whatYouChecked.trim();
+
+  const actual = trimForPrComment(actualRaw, 520);
+
+  const parts: string[] = [
+    "### PR gate failed",
     "",
-    "Check **`pr_browser_agent`** nie przeszedł — model zwrócił **`qaPassed: false`**.",
+    "`pr_browser_agent` — **`qaPassed: false`**",
     "",
-    "**Co sprawdzono:**",
-    checked,
+    "#### Summary",
+    "",
+    headline,
     "",
   ];
 
-  if (findings.length) {
-    parts.push(
-      "**Blokuje merge:**",
-      ...findings.map((f) => `- ${trimForPrComment(f, 420)}`),
-      ""
-    );
+  if (steps.length) {
+    parts.push("#### Steps to reproduce", "");
+    steps.forEach((step, i) => {
+      parts.push(`${i + 1}. ${trimForPrComment(step, 320)}`);
+    });
+    parts.push("");
   } else {
     parts.push(
-      "**Blokuje merge:** brak listy `blockingFindings` z modelu — zajrzyj do logów w Actions.",
+      "#### Steps to reproduce",
+      "",
+      "1. Open the preview at the workflow `BASE_URL` (repo root / home).",
+      "2. Use the primary CTA / action described in the QA instructions and observe the result.",
+      ""
+    );
+  }
+
+  parts.push(
+    "#### Expected result",
+    "",
+    expected,
+    "",
+    "#### Actual result",
+    "",
+    actual,
+    ""
+  );
+
+  const extraFindings = findings.filter(
+    (f) => f.trim() && f.trim() !== headline.trim() && f.trim() !== actualRaw.trim()
+  );
+  if (extraFindings.length) {
+    parts.push(
+      "#### Additional blocking notes",
+      "",
+      ...extraFindings.map((f) => `- ${trimForPrComment(f, 260)}`),
       ""
     );
   }
 
   if (notes) {
-    parts.push("**Notatka:**", notes, "");
+    parts.push("#### Notes", "", notes, "");
   }
 
-  parts.push(
-    "<sub>Pełne logi: artefakt **pr-agent-logs** (workflow *PR browser agent*).</sub>"
-  );
+  parts.push("---", "", "<sub>Full logs: workflow artifact **pr-agent-logs**.</sub>");
 
   return parts.join("\n");
 }
@@ -193,14 +270,16 @@ function firstMeaningfulFailureLine(detail: string): string {
 
 function formatGenericFailureComment(summary: string): string {
   return [
-    "### Agent PR gate — niepowodzenie",
+    "### PR gate failed",
     "",
-    "Agent nie ukończył kroku QA (błąd narzędzia, API lub nieprzewidywana odpowiedź).",
+    "The QA step did not complete (tool/API error or unexpected response).",
     "",
-    "**Skrót:**",
+    "**Summary:**",
     summary,
     "",
-    "<sub>Pełne logi: artefakt **pr-agent-logs**.</sub>",
+    "---",
+    "",
+    "<sub>Full logs: workflow artifact **pr-agent-logs**.</sub>",
   ].join("\n");
 }
 
@@ -225,11 +304,11 @@ function appendFailureDiagnostics(detail: string): string {
   if (looksRateLimited && !isQaVerdict) {
     sections.push(
       "",
-      "## Podpowiedź (wykryto limit API)",
+      "## Hint (API rate limit)",
       "",
-      "W logu widać sygnały **HTTP 429 / rate limit** albo równoważny komunikat o **limicie zapytań**.",
-      "To zwykle **przepustowość lub quota u dostawcy** (np. OpenRouter), często przy **darmowym lub tanim modelu** — **nie** oznacza samo w sobie, że zmiana w PR jest zła.",
-      "Co dalej: odczekaj i **uruchom workflow ponownie**, rozważ **płatny plan / inny model** (`STAGEHAND_MODEL`), ewentualnie **retry z backoff** w pipeline."
+      "Logs suggest **HTTP 429 / rate limit** or an equivalent **too many requests** message.",
+      "This is usually **provider throughput or quota** (e.g. OpenRouter), often on **free or cheap models** — it does **not** by itself mean the PR change is wrong.",
+      "Next: wait and **re-run the workflow**, consider a **paid plan / different model** (`STAGEHAND_MODEL`), or **retry with backoff** in CI."
     );
   }
 
@@ -245,10 +324,10 @@ function appendFailureDiagnostics(detail: string): string {
   if (looksInfra) {
     sections.push(
       "",
-      "## Podpowiedź (błąd infrastruktury LLM)",
+      "## Hint (LLM infrastructure)",
       "",
-      "Błąd wygląda na **odmowę lub niepoprawną odpowiedź API** (nie na werdykt QA z prompta).",
-      "Sprawdź status OpenRouter, limity konta i ustawienia modelu; ponów run — to **nie** musi oznaczać regresji w UI."
+      "This looks like an **API refusal or malformed response** (not a QA verdict from the prompt).",
+      "Check OpenRouter status, account limits, and model settings; re-run — this **may not** indicate a UI regression."
     );
   }
 
@@ -314,7 +393,7 @@ async function main() {
     writeFileSync(failureLogPath, m, "utf8");
     writePrFailureComment(
       formatGenericFailureComment(
-        "Brak sekretu OPENROUTER_API_KEY w GitHub Actions (Settings → Secrets and variables → Actions)."
+        "Missing OPENROUTER_API_KEY in GitHub Actions (Settings → Secrets and variables → Actions)."
       )
     );
     process.exit(1);
@@ -377,7 +456,20 @@ async function main() {
         qaPrompt,
         "",
         "Based only on the current page state after your exploration: did the QA instructions pass?",
-        'Respond with qaPassed (boolean), whatYouChecked (short), optional blockingFindings (strings), optional notes.',
+        "",
+        "## Structured verdict (required)",
+        "",
+        "- **All strings must be English** (the PR comment is English-only).",
+        "- **qaPassed**: boolean.",
+        "- **whatYouChecked**: one short sentence: what you verified on the page (for logs).",
+        "- If **qaPassed is false**, you MUST also fill:",
+        "  - **headline**: one-line title of the blocking issue.",
+        "  - **stepsToReproduce**: 1–5 short imperative steps (strings).",
+        "  - **expectedResult**: what should happen.",
+        "  - **actualResult**: what happened instead.",
+        "  - **blockingFindings**: optional 1–3 short bullets (same blocking points, no duplication of paragraphs).",
+        "- If **qaPassed is true**, leave headline/stepsToReproduce/expectedResult/actualResult empty or omit them.",
+        "- **notes**: optional, English, non-blocking context only.",
       ].join("\n"),
       verdictSchema
     );
