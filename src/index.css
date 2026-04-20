@@ -233,6 +233,10 @@ body {
   border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
+.interactive-card--counter {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
 .interactive-title {
   margin: 0 0 0.2rem;
   font-size: 1.05rem;
@@ -250,6 +254,10 @@ body {
   margin: 0.85rem 0 0;
   font-size: 0.85rem;
   color: var(--muted);
+}
+
+.interactive-hint--counter {
+  color: var(--card);
 }
 
 .interactive-output {
