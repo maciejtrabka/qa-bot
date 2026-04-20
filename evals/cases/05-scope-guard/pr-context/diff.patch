@@ -1,0 +1,13 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 987f374..e5c494d 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -139,7 +139,7 @@ export default function App() {
+             ◯
+           </span>
+           <div>
+-            <p className="eyebrow">studio jogi · Kraków, Kazimierz</p>
++            <p className="eyebrow">studio jogi · Kraków · Kazimierz</p>
+             <h1 className="brand-title" data-testid="hero-title">
+               Āsana
+             </h1>

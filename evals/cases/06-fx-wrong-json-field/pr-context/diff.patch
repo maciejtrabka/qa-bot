@@ -1,0 +1,15 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 987f374..1a80214 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -114,8 +114,8 @@ export default function App() {
+     try {
+       const r = await fetch(FRANKFURTER_EUR_PLN);
+       if (!r.ok) throw new Error("http");
+-      const j = (await r.json()) as { rates?: { PLN?: number } };
+-      const rate = j.rates?.PLN;
++      const j = (await r.json()) as { rates?: { PLN?: number; EUR?: number } };
++      const rate = j.rates?.EUR;
+       if (typeof rate !== "number") throw new Error("shape");
+       setFx({ plnPerEur: rate, err: null, loading: false });
+     } catch {

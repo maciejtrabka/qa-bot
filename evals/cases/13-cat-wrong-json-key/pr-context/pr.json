@@ -1,0 +1,4 @@
+{
+  "title": "fix(cat-fact): align with catfact.ninja response field rename",
+  "body": "catfact.ninja now returns the body under `text` instead of `fact` in our integration tests — updates parsing accordingly."
+}

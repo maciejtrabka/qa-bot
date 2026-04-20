@@ -1,0 +1,4 @@
+{
+  "title": "fix(fx): tighten Frankfurter JSON typing for PLN rate",
+  "body": "Refines the TypeScript shape for the Frankfurter `latest` response before reading the PLN cross-rate used in the demo card."
+}

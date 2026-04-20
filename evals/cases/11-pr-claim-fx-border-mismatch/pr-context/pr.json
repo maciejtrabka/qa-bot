@@ -1,0 +1,4 @@
+{
+  "title": "feat(ui): gold accent border on EUR→PLN demo card",
+  "body": "The **Kurs EUR → PLN** card (`interactive-card--fx`) now has a 4px gold accent on the left (`border-left: 4px solid #c9a227`) so it reads as the primary FX widget. Also clarifies the intro copy above the demo grid."
+}

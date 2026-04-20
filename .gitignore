@@ -11,7 +11,7 @@ pr-agent-pr-comment.md
 pr-agent-screenshot-viewport.png
 pr-agent-screenshot-fullpage.png
 pr-agent-verdict-raw.txt
-pr-context/
+/pr-context/
 test-results/
 AGENTS.md
 

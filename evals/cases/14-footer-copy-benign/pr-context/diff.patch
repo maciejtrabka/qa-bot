@@ -1,0 +1,13 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 987f374..67362f4 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -483,7 +483,7 @@ export default function App() {
+       </main>
+ 
+       <footer className="foot">
+-        <p>Āsana © {new Date().getFullYear()} · strona wizytówkowa (demo QA)</p>
++        <p>Āsana © {new Date().getFullYear()} · strona wizytówkowa (demo · QA)</p>
+       </footer>
+     </div>
+   );

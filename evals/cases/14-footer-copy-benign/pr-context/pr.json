@@ -1,0 +1,4 @@
+{
+  "title": "chore(footer): minor punctuation in demo tagline",
+  "body": "Uses a middle dot between “demo” and “QA” in the footer line for consistent micro-copy."
+}

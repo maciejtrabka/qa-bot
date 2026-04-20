@@ -1,0 +1,4 @@
+{
+  "title": "chore(ui): normalize eyebrow punctuation in brand header",
+  "body": "Replaces the comma between Kraków and Kazimierz with a middle dot so the eyebrow line reads more evenly."
+}

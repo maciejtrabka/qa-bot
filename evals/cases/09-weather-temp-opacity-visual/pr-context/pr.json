@@ -1,0 +1,4 @@
+{
+  "title": "style(weather): subtle emphasis on temperature readout",
+  "body": "Tweaks the success state typography in the Kraków weather card so the Celsius value stands out slightly more in the demo output area."
+}
