@@ -182,7 +182,7 @@ const bugSchema = z.object({
     .string()
     .nullish()
     .describe(
-      "REQUIRED when kind='visual'. A short, distinctive fragment of visible text taken verbatim from (or immediately next to) the affected element as it appears on the screenshot. Used only to locate the element for cropped evidence — never invent text, only quote what is actually rendered."
+      "REQUIRED when kind='visual'. For kind='functional', optional but strongly preferred when any stable visible label/text exists near the defect — it is used to draw the red highlight in pr-agent-bug-*.png. A short, distinctive fragment of visible text taken verbatim from (or immediately next to) the affected element as it appears on the screenshot. Used only to locate the element for cropped evidence — never invent text, only quote what is actually rendered."
     ),
   anchorHint: z
     .string()
@@ -331,6 +331,43 @@ function trimForPrComment(s: string, max: number): string {
   return `${t.slice(0, Math.max(0, max - 1))}…`;
 }
 
+/** How many consecutive pr-agent-bug-<n>.png files exist on disk (best-effort). */
+function countBugEvidencePngs(): number {
+  let n = 0;
+  for (let i = 1; i <= 32; i++) {
+    if (existsSync(`pr-agent-bug-${i}.png`)) n = i;
+    else break;
+  }
+  return n;
+}
+
+type PrArtifactSnapshot = {
+  savedViewport: boolean;
+  savedFullPage: boolean;
+  bugEvidenceFiles: number;
+};
+
+/**
+ * Footer for the PR comment: screenshots are never inlined on GitHub — they live in
+ * the same workflow artifact as text logs (`pr-agent-logs`).
+ */
+function buildPrArtifactFooter(snapshot?: PrArtifactSnapshot): string {
+  const base =
+    "**Screenshots & logs:** Files `pr-agent-screenshot-viewport.png`, `pr-agent-screenshot-fullpage.png`, and any `pr-agent-bug-*.png` are **not** embedded in this comment — they are uploaded with `pr-agent.log` and related text in workflow artifact **`pr-agent-logs`**. Download **pr-agent-logs** from this workflow run (Actions) to open the PNGs.";
+  if (!snapshot) {
+    return `<sub>${base}</sub>`;
+  }
+  const parts: string[] = [];
+  if (snapshot.savedViewport) parts.push("viewport screenshot");
+  if (snapshot.savedFullPage) parts.push("full-page screenshot");
+  if (snapshot.bugEvidenceFiles > 0) {
+    parts.push(`${snapshot.bugEvidenceFiles} bug evidence PNG(s)`);
+  }
+  const tail =
+    parts.length > 0 ? ` **Written this run:** ${parts.join("; ")}.` : "";
+  return `<sub>${base}${tail}</sub>`;
+}
+
 function writePrFailureComment(markdown: string): void {
   const max = 6000;
   const out =
@@ -470,7 +507,8 @@ function formatQaVerdictComment(
   verdict: Verdict,
   env: QaEnvironment,
   evidence: Array<{ index: number; file: string }> = [],
-  runs?: { runsTotal: number; runsFlagged: number }
+  runs?: { runsTotal: number; runsFlagged: number },
+  artifactSnapshot?: PrArtifactSnapshot
 ): string {
   const bugs = collectBugs(verdict);
   const notes = verdict.notes?.trim()
@@ -511,7 +549,7 @@ function formatQaVerdictComment(
     if (file) {
       parts.push(
         "",
-        `> Visual evidence: \`${file}\` (workflow artifact **pr-agent-logs**).`,
+        `> Visual evidence: \`${file}\` — same workflow artifact **pr-agent-logs** as the viewport/full-page PNGs (not inlined in this comment).`,
         ""
       );
     }
@@ -523,7 +561,7 @@ function formatQaVerdictComment(
     parts.push(...DOUBLE_HR, "### Notes", "", notes, "");
   }
 
-  parts.push("---", "", "<sub>Full logs: workflow artifact **pr-agent-logs**.</sub>");
+  parts.push("---", "", buildPrArtifactFooter(artifactSnapshot));
 
   return parts.join("\n");
 }
@@ -550,6 +588,15 @@ function firstMeaningfulFailureLine(detail: string): string {
 }
 
 function formatGenericFailureComment(summary: string): string {
+  const snapshot: PrArtifactSnapshot = {
+    savedViewport: existsSync(viewportScreenshotPath),
+    savedFullPage: existsSync(fullPageScreenshotPath),
+    bugEvidenceFiles: countBugEvidencePngs(),
+  };
+  const hasAnyArtifactFile =
+    snapshot.savedViewport ||
+    snapshot.savedFullPage ||
+    snapshot.bugEvidenceFiles > 0;
   return [
     "### PR gate failed",
     "",
@@ -560,7 +607,7 @@ function formatGenericFailureComment(summary: string): string {
     "",
     "---",
     "",
-    "<sub>Full logs: workflow artifact **pr-agent-logs**.</sub>",
+    buildPrArtifactFooter(hasAnyArtifactFile ? snapshot : undefined),
   ].join("\n");
 }
 
@@ -1100,10 +1147,11 @@ function tryParseJson(s: string): unknown | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Per-visual-bug evidence: resolve anchorText to a Playwright locator, outline
-// the element with a red frame injected via CSS, and save a padded-clip viewport
-// screenshot as `pr-agent-bug-<n>.png`. Only triggered when qaPassed === false.
-// Failures here are non-fatal: we just log and skip cropping for that bug.
+// Per-bug evidence (when anchorText is set): resolve anchorText to a locator,
+// outline the element with a red frame injected via CSS, and save a padded-clip
+// viewport screenshot as `pr-agent-bug-<n>.png`. Runs for both visual and
+// functional bugs if `anchorText` is present (kind alone does not gate this).
+// Only triggered when qaPassed === false. Failures are non-fatal.
 // ---------------------------------------------------------------------------
 
 type BBox = { x: number; y: number; width: number; height: number };
@@ -1129,9 +1177,18 @@ type PageLike = {
 };
 
 const BUG_OUTLINE_CLASS = "__pr_agent_bug_outline__";
-const BUG_OUTLINE_STYLE = `.${BUG_OUTLINE_CLASS} { outline: 4px solid #ff1744 !important; outline-offset: 2px !important; box-shadow: 0 0 0 8px rgba(255, 23, 68, 0.25) !important; }`;
-const BUG_CLIP_PADDING_PX = 32;
+const BUG_OUTLINE_STYLE = `.${BUG_OUTLINE_CLASS} {
+  outline: 4px solid #ff1744 !important;
+  outline-offset: 3px !important;
+  box-shadow: 0 0 0 10px rgba(255, 23, 68, 0.35) !important;
+  position: relative !important;
+  z-index: 2147483645 !important;
+}`;
+/** Padding around getBoundingClientRect() — outline/shadow extend outside the box. */
+const BUG_CLIP_PADDING_PX = 40;
+const OUTLINE_BLEED_PX = 16;
 const BUG_ANCHOR_MAX_CANDIDATES = 10;
+const BUG_OUTLINE_PAINT_MS = 80;
 
 async function installOutlineStyle(page: PageLike): Promise<void> {
   try {
@@ -1157,7 +1214,11 @@ function padClip(
   return { x, y, width, height };
 }
 
-async function firstVisibleInViewport(
+/**
+ * Scroll likely matches into view, then pick the first candidate that has a
+ * non-empty bounding box overlapping the viewport.
+ */
+async function resolveBugAnchor(
   locator: LocatorLike,
   viewport: { width: number; height: number } | null
 ): Promise<{ locator: LocatorLike; box: BBox } | null> {
@@ -1168,11 +1229,18 @@ async function firstVisibleInViewport(
   const cap = Math.min(count, BUG_ANCHOR_MAX_CANDIDATES);
   for (let i = 0; i < cap; i++) {
     const candidate = locator.nth(i);
+    try {
+      await candidate.evaluate((el: Element) => {
+        el.scrollIntoView({ block: "center", inline: "nearest" });
+      });
+    } catch {
+      /* try next */
+    }
+    await new Promise<void>((r) => setTimeout(r, 120));
     const visible = await candidate.isVisible().catch(() => false);
     if (!visible) continue;
     const box = await candidate.boundingBox().catch(() => null);
     if (!box || box.width <= 0 || box.height <= 0) continue;
-    // Must overlap viewport at least partially.
     if (box.x + box.width <= 0 || box.y + box.height <= 0) continue;
     if (box.x >= vw || box.y >= vh) continue;
     return { locator: candidate, box };
@@ -1184,18 +1252,16 @@ async function captureBugEvidence(
   page: PageLike,
   bugs: Bug[]
 ): Promise<Array<{ index: number; file: string }>> {
-  const visuals = bugs
+  const anchored = bugs
     .map((bug, index) => ({ bug, index }))
-    .filter(
-      ({ bug }) => bug.kind === "visual" && !!bug.anchorText?.trim()
-    );
-  if (visuals.length === 0) return [];
+    .filter(({ bug }) => !!bug.anchorText?.trim());
+  if (anchored.length === 0) return [];
 
   await installOutlineStyle(page);
   const viewport = page.viewportSize();
   const out: Array<{ index: number; file: string }> = [];
 
-  for (const { bug, index } of visuals) {
+  for (const { bug, index } of anchored) {
     const text = (bug.anchorText ?? "").trim();
     const hint = bug.anchorHint?.trim();
     const hintSuffix = hint ? ` (hint: ${hint})` : "";
@@ -1208,7 +1274,7 @@ async function captureBugEvidence(
       continue;
     }
 
-    const resolved = await firstVisibleInViewport(locator, viewport);
+    const resolved = await resolveBugAnchor(locator, viewport);
     if (!resolved) {
       console.warn(
         `captureBugEvidence: bug #${index + 1} anchor matched ${count} element(s) but none is visible in viewport — anchorText="${text}"${hintSuffix}`
@@ -1223,8 +1289,8 @@ async function captureBugEvidence(
 
     let outlined = false;
     try {
-      await resolved.locator.evaluate((el) =>
-        el.classList.add("__pr_agent_bug_outline__")
+      await resolved.locator.evaluate((el: Element) =>
+        el.classList.add(BUG_OUTLINE_CLASS)
       );
       outlined = true;
     } catch (e) {
@@ -1234,8 +1300,14 @@ async function captureBugEvidence(
       );
     }
 
+    await new Promise<void>((r) => setTimeout(r, BUG_OUTLINE_PAINT_MS));
+
     try {
-      const padded = padClip(resolved.box, BUG_CLIP_PADDING_PX, viewport);
+      const padded = padClip(
+        resolved.box,
+        BUG_CLIP_PADDING_PX + OUTLINE_BLEED_PX,
+        viewport
+      );
       const file = `pr-agent-bug-${index + 1}.png`;
       const png = await page.screenshot({ clip: padded, type: "png" });
       writeFileSync(file, png);
@@ -1251,8 +1323,8 @@ async function captureBugEvidence(
     } finally {
       if (outlined) {
         try {
-          await resolved.locator.evaluate((el) =>
-            el.classList.remove("__pr_agent_bug_outline__")
+          await resolved.locator.evaluate((el: Element) =>
+            el.classList.remove(BUG_OUTLINE_CLASS)
           );
         } catch {
           /* best-effort cleanup */
@@ -1370,8 +1442,13 @@ async function main() {
         console.warn("captureBugEvidence failed:", e);
         return [] as Array<{ index: number; file: string }>;
       });
+      const artifactSnapshot: PrArtifactSnapshot = {
+        savedViewport: existsSync(viewportScreenshotPath),
+        savedFullPage: existsSync(fullPageScreenshotPath),
+        bugEvidenceFiles: evidence.length,
+      };
       writePrFailureComment(
-        formatQaVerdictComment(verdict, env, evidence, { runsTotal, runsFlagged })
+        formatQaVerdictComment(verdict, env, evidence, { runsTotal, runsFlagged }, artifactSnapshot)
       );
       const firstBugTitle = verdict.bugs?.find((b) => b?.title?.trim())?.title?.trim();
       const hint =
