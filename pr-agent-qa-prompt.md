@@ -4,7 +4,19 @@ Jesteś na **jednej aplikacji** serwowanej pod `BASE_URL` (pierwszy widok po wej
 
 ## Kontekst zmiany
 
-W promptcie systemowym masz **tytuł i opis PR**, listę **zmienionych plików** oraz **fragment diffa**. To jest główne źródło prawdy o **zakresie zmiany**. **Diff ma pierwszeństwo** przed tytułem i opisem PR, jeśli się rozjeżdżają.
+W promptcie systemowym masz **tytuł i opis PR**, listę **zmienionych plików** oraz **fragment diffa**. To jest główne źródło prawdy o **zakresie zmiany**. **Diff ma pierwszeństwo** przed tytułem i opisem PR, jeśli się rozjeżdżają — ale **tylko** przy wyborze, *co testujesz*. Rozjazd typu „opis PR obiecuje zmianę, której w ogóle nie ma" traktujesz osobno, zgodnie z sekcją niżej.
+
+## Spójność opisu PR z rzeczywistością (opis vs diff/UI)
+
+Opis PR (tytuł + body) jest obietnicą dla osoby robiącej review — mówi, co reviewer ma zobaczyć. Jeśli opis zawiera **konkretną, weryfikowalną deklarację** (nazwa komponentu / karty / sekcji, klasa CSS, kolor, obramowanie, ikona, konkretny tekst, konkretna kontrolka) i ta deklaracja **nie znajduje pokrycia** ani w **diffie**, ani w **UI** (screenshot + a11y) w spodziewanym miejscu — to jest **blokujący bug funkcjonalny** sam w sobie. Powód: użytkownik tego PR (reviewer, integrator) dostaje zmianę niezgodną z deklaracją.
+
+Zasady zgłaszania:
+
+- Reaguj tylko na **konkretne, weryfikowalne** elementy opisu (np. „karta *Kurs EUR → PLN* dostaje `border-left` w kolorze `--accent`", „dodajemy klasę `demo-card--fx`", „tytuł karty brzmi teraz *X*"). **Pomijaj ogólniki** („drobna kosmetyka", „refinement", „lepsza czytelność") i parafrazy — one nie są weryfikowalne.
+- Jeśli opis wspomina **inną kartę / inny komponent / inną sekcję** niż ten, którego dotyczy diff, i tej zmiany **nie widać** ani w diffie, ani na ekranie — zgłoś to.
+- Zgłoś jako **osobny wpis w `bugs[]`** z `kind: "functional"`. Tytuł w formacie: *„PR description claims X but X is not present in the diff or UI"*. W `actualResult` zacytuj krótki fragment opisu PR, który nie ma pokrycia, i wskaż, że w diffie ani w UI tego nie ma.
+- **Nie duplikuj** — jeśli opis zawiera kilka powiązanych deklaracji o tej samej nieistniejącej zmianie, zgłoś jeden wpis i wyjaśnij całość w `actualResult`.
+- Odwrotny kierunek (diff robi więcej, niż deklaruje opis) **nie jest** automatycznie bugiem — oceniaj go po zwykłych kryteriach „Blokujące".
 
 ## Zakres testów: okolica zmiany PR (nie regresja całej aplikacji)
 
@@ -46,6 +58,7 @@ W kontekście werdyktu dostajesz sekcję **Console capture** — listę `console
 - Wyraźna regresja w tym obszarze (zły tekst, brak efektu kliknięcia w zmienionym flow, wywalony async, błąd walidacji na poprawnych danych), jeśli nie jest uzasadniona opisem zmiany.
 - **Edge case w obszarze zmiany, który łamie UI lub flow** (np. bardzo długi input rozwala layout zmienionego komponentu, podwójne kliknięcie dubluje akcję/stan, pusty wynik async daje pusty ekran bez komunikatu, brak obsługi błędu fetch).
 - **Błąd konsoli wywołany przez obszar zmiany** (patrz sekcja wyżej) — np. `console.error` / `console.warn` z pliku dotkniętego diffem albo z gałęzi `catch` zmienionego fetcha.
+- **Rozjazd opisu PR z rzeczywistością** — opis PR zawiera konkretną, weryfikowalną deklarację (patrz sekcja „Spójność opisu PR z rzeczywistością"), której nie widać ani w diffie, ani w UI.
 - **Regresja wizualna w obszarze PR:** element jest w DOM / drzewie a11y, ale **na screenshocie go nie widać** (ten sam kolor co tło, `visibility: hidden`, `opacity: 0`, poza ramką, zasłonięty przez inny element). Traktuj to jak buga blokującego na równi z funkcjonalnym.
 
 **Nie blokuj** wyłącznie dlatego, że nie sprawdziłeś niepowiązanych części aplikacji.
