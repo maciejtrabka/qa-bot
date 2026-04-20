@@ -1,0 +1,17 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 987f374..21ccb41 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -97,9 +97,9 @@ export default function App() {
+     try {
+       const r = await fetch("https://catfact.ninja/fact");
+       if (!r.ok) throw new Error("http");
+-      const j = (await r.json()) as { fact?: string };
+-      if (typeof j.fact !== "string") throw new Error("shape");
+-      setCatFact({ text: j.fact, err: null, loading: false });
++      const j = (await r.json()) as { fact?: string; text?: string };
++      if (typeof j.text !== "string") throw new Error("shape");
++      setCatFact({ text: j.text, err: null, loading: false });
+     } catch {
+       setCatFact({
+         text: null,

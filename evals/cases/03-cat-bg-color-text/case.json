@@ -1,0 +1,8 @@
+{
+  "id": "03-cat-bg-color-text",
+  "notePl": "Po załadowaniu faktu tekst ma kolor jak tło karty — niewidoczny na screenshocie (regresja wizualna).",
+  "expected": {
+    "qaPassed": false,
+    "kindAtLeastOne": "visual"
+  }
+}

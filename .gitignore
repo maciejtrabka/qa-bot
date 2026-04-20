@@ -15,5 +15,7 @@ pr-context/
 test-results/
 AGENTS.md
 
+evals/results.csv
+
 # Cursor (lokalne skille / reguły — nie wersjonujemy jak kodu produktu)
 .cursor/

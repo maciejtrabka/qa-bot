@@ -1,0 +1,8 @@
+{
+  "id": "07-counter-minus-inert",
+  "notePl": "Przycisk „−” licznika nic nie robi — regresja funkcjonalna w sekcji demo.",
+  "expected": {
+    "qaPassed": false,
+    "kindAtLeastOne": "functional"
+  }
+}

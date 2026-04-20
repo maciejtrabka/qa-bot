@@ -1,0 +1,30 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 987f374..acbc137 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -74,22 +74,9 @@ export default function App() {
+ 
+   const fetchWeather = useCallback(async () => {
+     setWeather((w) => ({ ...w, loading: true, err: null }));
+-    try {
+-      const r = await fetch(OPEN_METEO_KRK);
+-      if (!r.ok) throw new Error("http");
+-      const j = (await r.json()) as {
+-        current?: { temperature_2m?: number };
+-      };
+-      const t = j.current?.temperature_2m;
+-      if (typeof t !== "number") throw new Error("shape");
+-      setWeather({ c: Math.round(t * 10) / 10, err: null, loading: false });
+-    } catch {
+-      setWeather({
+-        c: null,
+-        err: "Nie udało się pobrać pogody.",
+-        loading: false,
+-      });
+-    }
++    await new Promise<void>(() => {
++      /* eval: intentionally never settles — handler is dead for QA harness */
++    });
+   }, []);
+ 
+   const fetchCatFact = useCallback(async () => {

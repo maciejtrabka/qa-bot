@@ -1,0 +1,13 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 987f374..547bca3 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -186,7 +186,7 @@ export default function App() {
+ 
+             <div className="highlights">
+               <article className="highlight">
+-                <h3>Grupy do 12 osób</h3>
++                <h3>Grupy do dwunastu osób</h3>
+                 <p>Żeby można było zwrócić uwagę na detal — i na Ciebie.</p>
+               </article>
+               <article className="highlight">

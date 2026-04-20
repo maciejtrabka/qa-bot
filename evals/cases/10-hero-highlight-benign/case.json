@@ -1,0 +1,7 @@
+{
+  "id": "10-hero-highlight-benign",
+  "notePl": "Zmiana słowna w pierwszym bloku highlight (12 → słownie) — bez wpływu na zachowanie.",
+  "expected": {
+    "qaPassed": true
+  }
+}

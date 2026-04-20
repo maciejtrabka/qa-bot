@@ -1,0 +1,8 @@
+{
+  "id": "02-weather-dead-handler",
+  "notePl": "fetch pogody zapętla loading (Promise nigdy się nie rozwiązuje) — bug funkcjonalny w demo karty pogody.",
+  "expected": {
+    "qaPassed": false,
+    "kindAtLeastOne": "functional"
+  }
+}

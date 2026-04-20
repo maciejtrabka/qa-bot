@@ -1,0 +1,8 @@
+{
+  "id": "06-fx-wrong-json-field",
+  "notePl": "Handler FX czyta `rates.EUR` zamiast `PLN` — odpowiedź API nie pasuje do oczekiwanego kształtu (zawsze błąd).",
+  "expected": {
+    "qaPassed": false,
+    "kindAtLeastOne": "functional"
+  }
+}
