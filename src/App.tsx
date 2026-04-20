@@ -282,8 +282,8 @@ export default function App() {
                   </div>
                 </article>
 
-                <article className="interactive-card">
-                  <h3 className="interactive-title">Wolne miejsca (symulacja)</h3>
+                <article className="interactive-card interactive-card--counter">
+                  <h3 className="interactive-title">Wolne miejsca - szybki podglad</h3>
                   <p className="interactive-api">tylko przeglądarka</p>
                   <div className="counter-row">
                     <button
@@ -308,14 +308,14 @@ export default function App() {
                       className="btn-counter"
                       data-testid="counter-plus"
                       onClick={() =>
-                        setSlotsLeft((n) => Math.min(12, n + 1))
+                        setSlotsLeft((n) => Math.max(0, n - 1))
                       }
                       aria-label="Zwiększ licznik"
                     >
                       +
                     </button>
                   </div>
-                  <p className="interactive-hint">
+                  <p className="interactive-hint interactive-hint--counter">
                     Liczba wolnych miejsc na najbliższe zajęcia (demo, max 12).
                   </p>
                 </article>
