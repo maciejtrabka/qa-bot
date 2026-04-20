@@ -10,7 +10,7 @@ Przy **pull requeście do `main`** workflow **„PR browser agent”** zapisuje 
 - zmienna repozytorium **`PR_AGENT_QA_PROMPT`** (treść trafia do env `PR_AGENT_PROMPT` i **nadpisuje** plik), albo
 - przy **`workflow_dispatch`**: pole **prompt_file** (ścieżka do innego pliku markdown z promptem).
 
-Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR: tytuł, opis, pliki, diff) używając **drzewa dostępności (a11y) / DOM** jako źródła prawdy. Krok werdyktu robi **dwa screenshoty** gotowej strony (viewport + full-page) i wysyła je razem z promptem QA oraz a11y snapshotem do modelu wizyjnego — zwraca strukturalny werdykt **`qaPassed`**. Dzięki temu agent łapie też **regresje czysto wizualne** (np. tekst w kolorze tła, nachodzące elementy, ukryty przycisk), których sam DOM nie zdradzi. Screenshoty trafiają do artefaktu **`pr-agent-logs`** (dostępne w UI Actions).
+Krok **`act`** wykonuje instrukcje z prompta (+ kontekst PR: tytuł, opis, pliki, diff) używając **drzewa dostępności (a11y) / DOM** jako źródła prawdy. W tle skrypt podpina się też do Playwrightowych zdarzeń strony — zbiera `console.error` / `console.warn`, niezłapane wyjątki, failed requesty oraz odpowiedzi HTTP ≥ 400 (blok **Console / network capture**). Krok werdyktu robi **dwa screenshoty** gotowej strony (viewport + full-page) i wysyła je razem z promptem QA, a11y snapshotem **oraz zebraną diagnostyką** do modelu wizyjnego — zwraca strukturalny werdykt **`qaPassed`**. Dzięki temu agent łapie też **regresje czysto wizualne** (np. tekst w kolorze tła, nachodzące elementy, ukryty przycisk) oraz **błędy runtime** (konsola / sieć), których sam DOM nie zdradzi. Screenshoty i `pr-agent-diagnostics.txt` trafiają do artefaktu **`pr-agent-logs`** (dostępne w UI Actions).
 
 Jeśli model ustawi `qaPassed: false` (albo wystąpi błąd), job **fail** → możliwa **blokada merge** + **komentarz na PR** (plik `pr-agent-pr-comment.md` z krótkim raportem po angielsku: *Summary*, *Steps to reproduce*, *Expected / Actual result*; bez wklejania całego prompta ani diffa).
 
@@ -92,4 +92,4 @@ Opcjonalnie lokalnie: `PR_AGENT_PROMPT_FILE=inny-plik.md` albo `PR_AGENT_PROMPT=
 ## Uwagi
 
 - Node na runnerze: **20.x** (ustawione w workflow; Stagehand wymaga współczesnego Node — trzymaj się wersji z joba, unikaj eksperymentalnych majorów na CI).
-- Logi przy błędzie: artifact **`pr-agent-logs`** (`pr-agent.log`, `pr-agent-failure.txt`, opcjonalnie `pr-agent-pr-comment.md` — ta sama treść co komentarz na PR, plus screenshoty `pr-agent-screenshot-viewport.png` / `pr-agent-screenshot-fullpage.png`).
+- Logi przy błędzie: artifact **`pr-agent-logs`** (`pr-agent.log`, `pr-agent-failure.txt`, opcjonalnie `pr-agent-pr-comment.md` — ta sama treść co komentarz na PR, plus screenshoty `pr-agent-screenshot-viewport.png` / `pr-agent-screenshot-fullpage.png` i `pr-agent-diagnostics.txt` z zebranymi błędami konsoli / sieci).
