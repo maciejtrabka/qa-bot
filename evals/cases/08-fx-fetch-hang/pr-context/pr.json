@@ -1,4 +1,0 @@
-{
-  "title": "refactor(fx): unify async loading pattern with weather card",
-  "body": "Restructures the Frankfurter fetch path so loading state transitions mirror the Open-Meteo weather demo for predictable QA screenshots."
-}

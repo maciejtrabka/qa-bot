@@ -1,4 +1,0 @@
-{
-  "title": "refactor(weather): streamline Open-Meteo fetch flow for demo card",
-  "body": "Restructures the async handler around the Kraków weather request so loading transitions are easier to reason about in QA previews."
-}

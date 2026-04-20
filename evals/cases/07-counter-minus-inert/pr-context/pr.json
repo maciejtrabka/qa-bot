@@ -1,4 +1,0 @@
-{
-  "title": "fix(demo): stabilize slots counter minus edge cases",
-  "body": "Adjusts the minus control on the local-only slots simulator so rapid clicks stay within bounds without visual jitter."
-}

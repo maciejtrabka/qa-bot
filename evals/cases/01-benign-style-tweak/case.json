@@ -1,7 +1,0 @@
-{
-  "id": "01-benign-style-tweak",
-  "notePl": "Kosmetyczna zmiana interpunkcji w linii eyebrow nad logo — oczekiwany werdykt: merge OK.",
-  "expected": {
-    "qaPassed": true
-  }
-}

@@ -1,8 +1,0 @@
-{
-  "id": "08-fx-fetch-hang",
-  "notePl": "Fetch kursu EUR/PLN nigdy nie kończy (Promise zawieszony) — karta zostaje w loading.",
-  "expected": {
-    "qaPassed": false,
-    "kindAtLeastOne": "functional"
-  }
-}

@@ -1,4 +1,0 @@
-{
-  "title": "chore(html): clarify document title with city name",
-  "body": "Updates the HTML `<title>` to include Kraków for clearer browser tab labels; no React bundle changes."
-}

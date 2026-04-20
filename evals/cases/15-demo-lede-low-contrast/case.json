@@ -1,8 +1,0 @@
-{
-  "id": "15-demo-lede-low-contrast",
-  "notePl": "Akapit intro sekcji demo z bardzo bladym kolorem tekstu na tle strony — niski kontrast (wizualnie).",
-  "expected": {
-    "qaPassed": false,
-    "kindAtLeastOne": "visual"
-  }
-}

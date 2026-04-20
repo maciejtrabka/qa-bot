@@ -1,7 +1,0 @@
-{
-  "id": "04-unrelated-noise",
-  "notePl": "Ten sam benign co 01, ale opis PR zawiera ogólne słowa bez fałszywych konkretów — nie powinno wywołać fałszywego fail (opis vs diff).",
-  "expected": {
-    "qaPassed": true
-  }
-}

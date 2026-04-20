@@ -1,8 +1,0 @@
-{
-  "id": "13-cat-wrong-json-key",
-  "notePl": "Parser oczekuje pola `text` zamiast `fact` — API catfact zwraca `fact`, więc zawsze błąd.",
-  "expected": {
-    "qaPassed": false,
-    "kindAtLeastOne": "functional"
-  }
-}

@@ -1,4 +1,0 @@
-{
-  "title": "style(cat-fact): improve fact text wrapping in demo card",
-  "body": "Adjusts the cat fact paragraph layout so longer facts wrap cleanly inside the interactive card without horizontal overflow."
-}

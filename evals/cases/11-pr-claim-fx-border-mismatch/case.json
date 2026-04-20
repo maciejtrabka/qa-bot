@@ -1,8 +1,0 @@
-{
-  "id": "11-pr-claim-fx-border-mismatch",
-  "notePl": "Opis PR obiecuje złoty border na karcie FX, a diff zmienia tylko tekst intro nad siatką — test spójności opisu z diffem/UI.",
-  "expected": {
-    "qaPassed": false,
-    "kindAtLeastOne": "functional"
-  }
-}

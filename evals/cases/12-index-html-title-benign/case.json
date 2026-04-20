@@ -1,7 +1,0 @@
-{
-  "id": "12-index-html-title-benign",
-  "notePl": "Wyłącznie zmiana `<title>` w index.html — bez zmian w React.",
-  "expected": {
-    "qaPassed": true
-  }
-}

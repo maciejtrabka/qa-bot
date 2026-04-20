@@ -1,8 +1,0 @@
-{
-  "id": "09-weather-temp-opacity-visual",
-  "notePl": "Wiersz z temperaturą ma opacity:0 — na screenshocie niewidoczny mimo obecności w a11y.",
-  "expected": {
-    "qaPassed": false,
-    "kindAtLeastOne": "visual"
-  }
-}

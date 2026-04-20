@@ -1,7 +1,0 @@
-{
-  "id": "05-scope-guard",
-  "notePl": "W workspace jest dodatkowy bug (plus licznika), ale syntetyczny diff PR pokazuje tylko eyebrow — etykieta: merge OK jeśli agent trzyma się zakresu diffa (może być flaky przy szerokim act).",
-  "expected": {
-    "qaPassed": true
-  }
-}
