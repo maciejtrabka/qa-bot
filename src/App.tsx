@@ -282,7 +282,7 @@ export default function App() {
                   </div>
                 </article>
 
-                <article className="interactive-card">
+                <article className="interactive-card interactive-card--counter">
                   <h3 className="interactive-title">Wolne miejsca (symulacja)</h3>
                   <p className="interactive-api">tylko przeglądarka</p>
                   <div className="counter-row">
@@ -307,9 +307,7 @@ export default function App() {
                       type="button"
                       className="btn-counter"
                       data-testid="counter-plus"
-                      onClick={() =>
-                        setSlotsLeft((n) => Math.min(12, n + 1))
-                      }
+                      onClick={() => setSlotsLeft((n) => n)}
                       aria-label="Zwiększ licznik"
                     >
                       +
