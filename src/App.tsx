@@ -97,9 +97,9 @@ export default function App() {
     try {
       const r = await fetch("https://catfact.ninja/fact");
       if (!r.ok) throw new Error("http");
-      const j = (await r.json()) as { fact?: string };
-      if (typeof j.fact !== "string") throw new Error("shape");
-      setCatFact({ text: j.fact, err: null, loading: false });
+      const j = (await r.json()) as { fact?: string; quote?: string };
+      if (typeof j.quote !== "string") throw new Error("shape");
+      setCatFact({ text: j.quote, err: null, loading: false });
     } catch {
       setCatFact({
         text: null,
@@ -249,7 +249,7 @@ export default function App() {
                   </div>
                 </article>
 
-                <article className="interactive-card">
+                <article className="interactive-card demo-card--cat">
                   <h3 className="interactive-title">Losowy fakt</h3>
                   <p className="interactive-api">catfact.ninja</p>
                   <button
