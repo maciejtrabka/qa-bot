@@ -233,6 +233,14 @@ body {
   border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
+.demo-card--fx {
+  border-left: 3px solid var(--accent);
+}
+
+.demo-card--fx .interactive-title {
+  color: var(--card);
+}
+
 .interactive-title {
   margin: 0 0 0.2rem;
   font-size: 1.05rem;
