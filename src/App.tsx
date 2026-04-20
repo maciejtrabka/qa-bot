@@ -320,14 +320,14 @@ export default function App() {
                   </p>
                 </article>
 
-                <article className="interactive-card">
+                <article className="interactive-card demo-card--fx">
                   <h3 className="interactive-title">Kurs EUR → PLN</h3>
                   <p className="interactive-api">Frankfurter · api.frankfurter.dev</p>
                   <button
                     type="button"
                     className="btn btn-secondary"
                     data-testid="fx-button"
-                    onClick={fetchFx}
+                    onClick={() => {}}
                     disabled={fx.loading}
                   >
                     {fx.loading ? "Ładowanie…" : "Pobierz kurs"}
