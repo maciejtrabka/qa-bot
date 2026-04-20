@@ -36,6 +36,7 @@ Jeśli model ustawi `qaPassed: false` (albo wystąpi błąd), job **fail** → m
 | `STAGEHAND_MODEL` | (Opcjonalnie) Actions **Variables** | Pełny slug OpenRouter. Domyślnie `anthropic/claude-sonnet-4.6` (obsługuje vision — wymagane do werdyktu ze screenshotami). Model tekst-only (np. `meta-llama/llama-3.3-70b-instruct:free`) zadziała **tylko** przy `PR_AGENT_VISION=0`. |
 | `PR_AGENT_QA_PROMPT` | (Opcjonalnie) Actions **Variables** | Pełny tekst prompta QA — jeśli ustawiony, **zastępuje** plik `pr-agent-qa-prompt.md`. |
 | `PR_AGENT_VISION` | (Opcjonalnie) Actions **Variables** lub env lokalny | `0` wyłącza werdykt wizyjny (fallback do `stagehand.extract()`). Domyślnie włączone. |
+| `PR_AGENT_RUNS` | (Opcjonalnie) Actions **Variables** lub env lokalny | Ile niezależnych wywołań LLM‑werdyktu na to samo evidence (screenshoty + a11y + diagnostyka przygotowywane raz). Domyślnie **`2`** — agregacja **konserwatywna**: jeśli którykolwiek run zwróci `qaPassed=false`, job fail. Bugi z runów są scalane i dedupowane po `title` (funkcjonalne) / `anchorText` (wizualne). Ustaw `1` lokalnie, żeby szybciej iterować nad promptem. Clamp: 1–5. |
 
 **PR z forka** zwykle **nie** dostaje sekretów — MVP zakłada PR-y **z tego samego repozytorium**.
 

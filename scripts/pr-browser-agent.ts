@@ -26,6 +26,21 @@ const modelName =
 const visionEnabled =
   (process.env.PR_AGENT_VISION ?? "1").trim().toLowerCase() !== "0";
 
+/**
+ * How many independent LLM verdict passes to run with the same evidence
+ * (screenshots + a11y tree + diagnostics prepared once). Conservative
+ * aggregation: if ANY pass returns qaPassed=false, the gate fails and all
+ * reported bugs are merged (deduped by title / anchorText). Default is 2 so the
+ * gate is less sensitive to a single stochastic miss; can be overridden per
+ * run, e.g. PR_AGENT_RUNS=1 locally while iterating on the prompt.
+ */
+const verdictRuns = (() => {
+  const raw = (process.env.PR_AGENT_RUNS ?? "2").trim();
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(n, 5);
+})();
+
 const viewportScreenshotPath =
   process.env.PR_AGENT_SCREENSHOT_VIEWPORT?.trim() ||
   "pr-agent-screenshot-viewport.png";
@@ -209,6 +224,19 @@ const verdictSchema = z.object({
 
 type Bug = z.infer<typeof bugSchema>;
 type Verdict = z.infer<typeof verdictSchema>;
+
+/**
+ * Result of running the verdict LLM `runsTotal` times over the same evidence,
+ * after aggregation. `runsFlagged` is how many runs returned `qaPassed=false`
+ * (useful metadata for the PR comment — a 1/2 or 2/2 split tells the reviewer
+ * whether the gate was unanimous or borderline). The merged `verdict` follows
+ * the conservative rule: any fail wins.
+ */
+type VerdictBundle = {
+  verdict: Verdict;
+  runsTotal: number;
+  runsFlagged: number;
+};
 
 type QaEnvironment = {
   previewUrl: string;
@@ -417,20 +445,32 @@ function renderBugSection(bug: Bug, index: number): string[] {
   return out;
 }
 
-function renderEnvironmentSection(env: QaEnvironment): string[] {
-  return [
+function renderEnvironmentSection(
+  env: QaEnvironment,
+  runs?: { runsTotal: number; runsFlagged: number }
+): string[] {
+  const lines = [
     "### Environment",
     "",
     `- **Browser:** ${trimForPrComment(env.userAgent || "(unknown)", 240)}`,
     `- **Run time (UTC):** ${env.runTimeUtc}`,
-    "",
   ];
+  if (runs && runs.runsTotal > 1) {
+    lines.push(
+      `- **Verdict passes:** ${runs.runsFlagged}/${runs.runsTotal} flagged blocking issues (conservative aggregation: any fail blocks merge).`
+    );
+  } else if (runs && runs.runsTotal === 1) {
+    lines.push(`- **Verdict passes:** 1 (single pass; set \`PR_AGENT_RUNS\` to raise).`);
+  }
+  lines.push("");
+  return lines;
 }
 
 function formatQaVerdictComment(
   verdict: Verdict,
   env: QaEnvironment,
-  evidence: Array<{ index: number; file: string }> = []
+  evidence: Array<{ index: number; file: string }> = [],
+  runs?: { runsTotal: number; runsFlagged: number }
 ): string {
   const bugs = collectBugs(verdict);
   const notes = verdict.notes?.trim()
@@ -477,7 +517,7 @@ function formatQaVerdictComment(
     }
   });
 
-  parts.push(...DOUBLE_HR, ...renderEnvironmentSection(env));
+  parts.push(...DOUBLE_HR, ...renderEnvironmentSection(env, runs));
 
   if (notes) {
     parts.push(...DOUBLE_HR, "### Notes", "", notes, "");
@@ -707,6 +747,184 @@ function buildVerdictPrompt(
   return parts.join("\n");
 }
 
+const VERDICT_SYSTEM_PROMPT = [
+  "You are a senior QA engineer reviewing a pull request preview build.",
+  "You judge only the PR change region based on the PR context, attached screenshots, and the accessibility/page text snapshot.",
+  "Visual regressions that only show up in screenshots (invisible or illegible text, hidden/obscured controls, clearly broken layout) are blocking when they fall inside the PR change region.",
+  "Every visual claim in your verdict must be grounded in the attached screenshots, not in CSS rules from the diff. If the diff hints at a visual problem that the screenshots do not confirm, either omit it or state 'diff hypothesis, not visually confirmed' — do not use hedged wording like 'may cause' / 'might' / 'could'.",
+  "",
+  "### Response format (STRICT)",
+  "Your entire response must be ONE fenced JSON code block and nothing else:",
+  "```json",
+  "{ …the verdict object… }",
+  "```",
+  "- No prose, headers, or commentary before or after the fenced block.",
+  "- Think silently. Do not narrate steps. Only output the final JSON inside the fence.",
+  "- Emit exactly one ```json fenced block.",
+  "",
+  "The JSON must exactly match this TypeScript-style shape:",
+  "{",
+  '  "qaPassed": boolean,',
+  '  "whatYouChecked": string,                 // one short English sentence',
+  '  "bugs"?: Array<{                          // required and non-empty if qaPassed=false',
+  '    "title": string,                         //   one-line English title of THIS bug',
+  '    "stepsToReproduce": string[],            //   1-5 imperative steps',
+  '    "expectedResult": string,',
+  '    "actualResult": string,',
+  '    "notes"?: string,                        //   optional, scoped to this bug only',
+  '    "kind"?: "visual" | "functional",        //   category — see rules below',
+  '    "anchorText"?: string,                   //   REQUIRED when kind="visual" — see rules below',
+  '    "anchorHint"?: string                    //   optional disambiguator when anchorText is ambiguous',
+  "  }>,",
+  '  "notes"?: string                          // optional non-blocking context (not per bug)',
+  "}",
+  "",
+  "Rules for bugs[]:",
+  "- Report EVERY blocking issue (functional AND visual) as its own object.",
+  "- Do NOT combine two different bugs into a single object.",
+  "- Do NOT use the legacy top-level `headline` / `stepsToReproduce` / `expectedResult` / `actualResult` / `blockingFindings` fields.",
+  "",
+  "Rules for `kind` / `anchorText` / `anchorHint`:",
+  "- `kind` classifies the bug: use `'visual'` for regressions that are only visible on screenshots (invisible / illegible text, same-as-background color, hidden or obscured controls, broken layout, low contrast). Use `'functional'` for anything else (broken handler, wrong state, failed fetch, wrong content). If unsure, omit `kind` — it is treated as `'functional'`.",
+  "- When `kind === 'visual'`, you MUST also provide `anchorText`: a short, DISTINCTIVE fragment of visible text taken VERBATIM from (or immediately next to) the affected element on the screenshot. It is used only to locate the element for cropped evidence — it is NOT a test step. Never invent text: quote what is actually rendered. Prefer something unique in the page (a label, a heading, a specific number) over common words.",
+  "- If the same anchorText could match several elements on the page, add `anchorHint` with a brief English disambiguator (e.g. 'card in the bottom-right', 'third button in the header row', 'second list item'). Keep it short — it is a hint for a human / script, not a sentence.",
+  "- For `kind === 'functional'`, `anchorText` is optional and usually not needed.",
+].join("\n");
+
+type VerdictEvidence = {
+  userText: string;
+  imageParts: Array<{ type: "image"; image: Uint8Array; mediaType: string }>;
+};
+
+type ModelLike = Parameters<typeof generateText>[0]["model"];
+
+/**
+ * Dispatch ONE verdict LLM call against the shared evidence (screenshots +
+ * a11y text + diagnostics). Separated from `computeVerdict` so we can repeat it
+ * N times (PR_AGENT_RUNS) without redoing any of the page prep work.
+ */
+async function callVerdictOnce(
+  model: ModelLike,
+  evidence: VerdictEvidence,
+  runIndex: number,
+  runsTotal: number
+): Promise<{ verdict: Verdict; raw: string }> {
+  console.log(
+    `Vision verdict run ${runIndex + 1}/${runsTotal}: calling ${modelName} ` +
+      `with ${evidence.imageParts.length} screenshot(s), prompt ${evidence.userText.length} chars.`
+  );
+
+  const result = await generateText({
+    model,
+    system: VERDICT_SYSTEM_PROMPT,
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: evidence.userText }, ...evidence.imageParts],
+      },
+    ],
+    temperature: 0,
+    maxOutputTokens: 2048,
+    maxRetries: 1,
+  });
+
+  console.log(
+    `Verdict run ${runIndex + 1}/${runsTotal} response: finishReason=${result.finishReason}, ` +
+      `length=${(result.text ?? "").length}, usage=${JSON.stringify(result.usage)}`
+  );
+
+  const raw = (result.text ?? "").trim();
+  const parsed = parseVerdictJson(raw);
+  const validated = verdictSchema.safeParse(parsed);
+  if (!validated.success) {
+    console.error(`Raw model output (run ${runIndex + 1}):\n`, raw);
+    throw new Error(
+      `Model verdict did not match schema (run ${runIndex + 1}/${runsTotal}): ${validated.error.message}`
+    );
+  }
+  return { verdict: validated.data, raw };
+}
+
+/**
+ * Normalize a bug identity so duplicates across runs collapse to one entry.
+ * For visual bugs we prefer anchorText (most specific), otherwise the title.
+ */
+function bugIdentityKey(bug: Bug): string {
+  const kind = bug.kind ?? "functional";
+  const anchor = bug.anchorText?.trim().toLowerCase();
+  if (kind === "visual" && anchor) {
+    return `visual::${anchor}`;
+  }
+  const title = (bug.title ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  return `${kind}::${title}`;
+}
+
+/**
+ * Aggregate N per-run verdicts with a conservative policy:
+ *  - If ANY run has qaPassed=false, the gate fails.
+ *  - When it fails, bugs from all failing runs are merged and deduped
+ *    (by title / anchorText — see bugIdentityKey).
+ *  - whatYouChecked falls back to the longest non-empty string across runs so
+ *    the PR comment shows the most informative summary.
+ *  - Top-level notes are concatenated from failing runs (deduped verbatim).
+ */
+function aggregateVerdicts(runs: Verdict[]): Verdict {
+  if (runs.length === 0) {
+    throw new Error("aggregateVerdicts: received zero runs.");
+  }
+  if (runs.length === 1) {
+    return runs[0]!;
+  }
+
+  const failingRuns = runs.filter((r) => !r.qaPassed);
+  const aggregatedPassed = failingRuns.length === 0;
+
+  const whatYouCheckedPool = runs
+    .map((r) => r.whatYouChecked?.trim() ?? "")
+    .filter((s) => s.length > 0)
+    .sort((a, b) => b.length - a.length);
+  const whatYouChecked = whatYouCheckedPool[0] ?? "";
+
+  if (aggregatedPassed) {
+    const notesPool = runs
+      .map((r) => r.notes?.trim())
+      .filter((s): s is string => !!s && s.length > 0);
+    return {
+      qaPassed: true,
+      whatYouChecked,
+      bugs: [],
+      notes: notesPool[0] ?? null,
+    };
+  }
+
+  const dedupedBugs = new Map<string, Bug>();
+  for (const run of failingRuns) {
+    for (const bug of run.bugs ?? []) {
+      const key = bugIdentityKey(bug);
+      if (!dedupedBugs.has(key)) {
+        dedupedBugs.set(key, bug);
+      }
+    }
+  }
+
+  const notesSeen = new Set<string>();
+  const mergedNotes: string[] = [];
+  for (const run of failingRuns) {
+    const n = run.notes?.trim();
+    if (!n) continue;
+    if (notesSeen.has(n)) continue;
+    notesSeen.add(n);
+    mergedNotes.push(n);
+  }
+
+  return {
+    qaPassed: false,
+    whatYouChecked,
+    bugs: Array.from(dedupedBugs.values()),
+    notes: mergedNotes.length > 0 ? mergedNotes.join("\n\n") : null,
+  };
+}
+
 async function computeVerdict({
   page,
   prCtx,
@@ -715,7 +933,7 @@ async function computeVerdict({
   page: { screenshot(options?: { fullPage?: boolean; type?: "png" | "jpeg" }): Promise<Buffer> };
   prCtx: PrContextMaterial | null;
   qaPrompt: string;
-}): Promise<z.infer<typeof verdictSchema>> {
+}): Promise<VerdictBundle> {
   const prCtxBlock = formatPrContextForPrompt(prCtx);
 
   const diagnosticsBlock = formatDiagnosticsBlock();
@@ -751,18 +969,23 @@ async function computeVerdict({
 
   if (!visionEnabled || (!viewportPng && !fullPagePng)) {
     if (!visionEnabled) {
-      console.log("Vision disabled via PR_AGENT_VISION=0 — using Stagehand text extract.");
+      console.log("Vision disabled via PR_AGENT_VISION=0 — using Stagehand text extract (runs=1).");
     } else {
-      console.warn("No screenshots available — falling back to Stagehand text extract.");
+      console.warn("No screenshots available — falling back to Stagehand text extract (runs=1).");
     }
     const stagehand = globalStagehand;
     if (!stagehand) {
       throw new Error("Stagehand instance unavailable for text-only fallback.");
     }
-    return stagehand.extract(
+    const textVerdict = await stagehand.extract(
       buildVerdictPrompt(prCtxBlock, qaPrompt, undefined, false, diagnosticsBlock),
       verdictSchema
     );
+    return {
+      verdict: textVerdict,
+      runsTotal: 1,
+      runsFlagged: textVerdict.qaPassed ? 0 : 1,
+    };
   }
 
   let pageText: string | undefined;
@@ -804,87 +1027,41 @@ async function computeVerdict({
     imageParts.push({ type: "image", image: fullPagePng, mediaType: "image/png" });
   }
 
-  console.log(
-    `Vision verdict: calling ${modelName} with ${imageParts.length} screenshot(s), prompt ${userText.length} chars.`
-  );
-
-  const systemPrompt = [
-    "You are a senior QA engineer reviewing a pull request preview build.",
-    "You judge only the PR change region based on the PR context, attached screenshots, and the accessibility/page text snapshot.",
-    "Visual regressions that only show up in screenshots (invisible or illegible text, hidden/obscured controls, clearly broken layout) are blocking when they fall inside the PR change region.",
-    "Every visual claim in your verdict must be grounded in the attached screenshots, not in CSS rules from the diff. If the diff hints at a visual problem that the screenshots do not confirm, either omit it or state 'diff hypothesis, not visually confirmed' — do not use hedged wording like 'may cause' / 'might' / 'could'.",
-    "",
-    "### Response format (STRICT)",
-    "Your entire response must be ONE fenced JSON code block and nothing else:",
-    "```json",
-    "{ …the verdict object… }",
-    "```",
-    "- No prose, headers, or commentary before or after the fenced block.",
-    "- Think silently. Do not narrate steps. Only output the final JSON inside the fence.",
-    "- Emit exactly one ```json fenced block.",
-    "",
-    "The JSON must exactly match this TypeScript-style shape:",
-    "{",
-    '  "qaPassed": boolean,',
-    '  "whatYouChecked": string,                 // one short English sentence',
-    '  "bugs"?: Array<{                          // required and non-empty if qaPassed=false',
-    '    "title": string,                         //   one-line English title of THIS bug',
-    '    "stepsToReproduce": string[],            //   1-5 imperative steps',
-    '    "expectedResult": string,',
-    '    "actualResult": string,',
-    '    "notes"?: string,                        //   optional, scoped to this bug only',
-    '    "kind"?: "visual" | "functional",        //   category — see rules below',
-    '    "anchorText"?: string,                   //   REQUIRED when kind="visual" — see rules below',
-    '    "anchorHint"?: string                    //   optional disambiguator when anchorText is ambiguous',
-    "  }>,",
-    '  "notes"?: string                          // optional non-blocking context (not per bug)',
-    "}",
-    "",
-    "Rules for bugs[]:",
-    "- Report EVERY blocking issue (functional AND visual) as its own object.",
-    "- Do NOT combine two different bugs into a single object.",
-    "- Do NOT use the legacy top-level `headline` / `stepsToReproduce` / `expectedResult` / `actualResult` / `blockingFindings` fields.",
-    "",
-    "Rules for `kind` / `anchorText` / `anchorHint`:",
-    "- `kind` classifies the bug: use `'visual'` for regressions that are only visible on screenshots (invisible / illegible text, same-as-background color, hidden or obscured controls, broken layout, low contrast). Use `'functional'` for anything else (broken handler, wrong state, failed fetch, wrong content). If unsure, omit `kind` — it is treated as `'functional'`.",
-    "- When `kind === 'visual'`, you MUST also provide `anchorText`: a short, DISTINCTIVE fragment of visible text taken VERBATIM from (or immediately next to) the affected element on the screenshot. It is used only to locate the element for cropped evidence — it is NOT a test step. Never invent text: quote what is actually rendered. Prefer something unique in the page (a label, a heading, a specific number) over common words.",
-    "- If the same anchorText could match several elements on the page, add `anchorHint` with a brief English disambiguator (e.g. 'card in the bottom-right', 'third button in the header row', 'second list item'). Keep it short — it is a hint for a human / script, not a sentence.",
-    "- For `kind === 'functional'`, `anchorText` is optional and usually not needed.",
-  ].join("\n");
-
-  const result = await generateText({
-    model,
-    system: systemPrompt,
-    messages: [
-      {
-        role: "user",
-        content: [{ type: "text", text: userText }, ...imageParts],
-      },
-    ],
-    temperature: 0,
-    maxOutputTokens: 2048,
-    maxRetries: 1,
-  });
+  const evidence: VerdictEvidence = { userText, imageParts };
 
   console.log(
-    `Verdict response: finishReason=${result.finishReason}, length=${(result.text ?? "").length}, usage=${JSON.stringify(result.usage)}`
+    `Vision verdict: running ${verdictRuns} pass(es) against the same evidence.`
   );
 
-  const raw = (result.text ?? "").trim();
+  const runs: Verdict[] = [];
+  const rawDumps: string[] = [];
+  for (let i = 0; i < verdictRuns; i++) {
+    const { verdict, raw } = await callVerdictOnce(model, evidence, i, verdictRuns);
+    runs.push(verdict);
+    rawDumps.push(
+      `=== Run ${i + 1}/${verdictRuns} (qaPassed=${verdict.qaPassed}) ===\n${raw}`
+    );
+  }
+
   try {
-    writeFileSync("pr-agent-verdict-raw.txt", raw, "utf8");
+    writeFileSync("pr-agent-verdict-raw.txt", rawDumps.join("\n\n"), "utf8");
   } catch {
     /* best-effort */
   }
-  const parsed = parseVerdictJson(raw);
-  const validated = verdictSchema.safeParse(parsed);
-  if (!validated.success) {
-    console.error("Raw model output:\n", raw);
-    throw new Error(
-      `Model verdict did not match schema: ${validated.error.message}`
-    );
-  }
-  return validated.data;
+
+  const aggregated = aggregateVerdicts(runs);
+  const runsFlagged = runs.filter((r) => !r.qaPassed).length;
+
+  console.log(
+    `Aggregated verdict: qaPassed=${aggregated.qaPassed}, ` +
+      `runsFlagged=${runsFlagged}/${runs.length} (conservative: any fail blocks).`
+  );
+
+  return {
+    verdict: aggregated,
+    runsTotal: runs.length,
+    runsFlagged,
+  };
 }
 
 function parseVerdictJson(raw: string): unknown {
@@ -1167,13 +1344,17 @@ async function main() {
     const actText = buildActInstruction(prCtxBlock, qaPrompt, origin);
     await stagehand.act(actText);
 
-    const verdict = await computeVerdict({
+    const verdictBundle = await computeVerdict({
       page,
       prCtx,
       qaPrompt,
     });
+    const { verdict, runsTotal, runsFlagged } = verdictBundle;
 
-    console.log("LLM verdict:", JSON.stringify(verdict, null, 2));
+    console.log(
+      `LLM verdict (aggregated from ${runsTotal} pass(es), ${runsFlagged} flagged):`,
+      JSON.stringify(verdict, null, 2)
+    );
 
     if (!verdict.qaPassed) {
       const env: QaEnvironment = {
@@ -1189,13 +1370,17 @@ async function main() {
         console.warn("captureBugEvidence failed:", e);
         return [] as Array<{ index: number; file: string }>;
       });
-      writePrFailureComment(formatQaVerdictComment(verdict, env, evidence));
+      writePrFailureComment(
+        formatQaVerdictComment(verdict, env, evidence, { runsTotal, runsFlagged })
+      );
       const firstBugTitle = verdict.bugs?.find((b) => b?.title?.trim())?.title?.trim();
       const hint =
         firstBugTitle ??
         verdict.blockingFindings?.find((s) => s?.trim())?.trim() ??
         verdict.whatYouChecked.slice(0, 160);
-      throw new Error(`QA gate failed (qaPassed=false): ${hint}`);
+      throw new Error(
+        `QA gate failed (qaPassed=false, ${runsFlagged}/${runsTotal} runs flagged): ${hint}`
+      );
     }
 
     console.log("PR browser agent: QA gate passed (model verdict).");
