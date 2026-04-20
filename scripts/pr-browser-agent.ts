@@ -182,7 +182,7 @@ const bugSchema = z.object({
     .string()
     .nullish()
     .describe(
-      "REQUIRED when kind='visual'. For kind='functional', optional but strongly preferred when any stable visible label/text exists near the defect — it is used to draw the red highlight in pr-agent-bug-*.png. A short, distinctive fragment of visible text taken verbatim from (or immediately next to) the affected element as it appears on the screenshot. Used only to locate the element for cropped evidence — never invent text, only quote what is actually rendered."
+      "REQUIRED when kind='visual'. For kind='functional', optional but strongly preferred when any stable visible label/text exists near the defect — it is used to locate the element for a cropped pr-agent-bug-*.png. A short, distinctive fragment of visible text taken verbatim from (or immediately next to) the affected element as it appears on the screenshot. Used only to locate the element for cropped evidence — never invent text, only quote what is actually rendered."
     ),
   anchorHint: z
     .string()
@@ -1147,11 +1147,10 @@ function tryParseJson(s: string): unknown | undefined {
 }
 
 // ---------------------------------------------------------------------------
-// Per-bug evidence (when anchorText is set): resolve anchorText to a locator,
-// outline the element with a red frame injected via CSS, and save a padded-clip
-// viewport screenshot as `pr-agent-bug-<n>.png`. Runs for both visual and
-// functional bugs if `anchorText` is present (kind alone does not gate this).
-// Only triggered when qaPassed === false. Failures are non-fatal.
+// Per-bug evidence (when anchorText is set): resolve anchorText to a locator
+// and save a padded viewport clip around that element as `pr-agent-bug-<n>.png`.
+// Runs for both visual and functional bugs if `anchorText` is present (kind alone
+// does not gate this). Only triggered when qaPassed === false. Failures are non-fatal.
 // ---------------------------------------------------------------------------
 
 type BBox = { x: number; y: number; width: number; height: number };
@@ -1168,7 +1167,6 @@ type LocatorLike = {
 type PageLike = {
   getByText(text: string, options?: { exact?: boolean }): LocatorLike;
   viewportSize(): { width: number; height: number } | null;
-  addStyleTag(options: { content: string }): Promise<unknown>;
   screenshot(options?: {
     clip?: BBox;
     fullPage?: boolean;
@@ -1176,27 +1174,9 @@ type PageLike = {
   }): Promise<Buffer>;
 };
 
-const BUG_OUTLINE_CLASS = "__pr_agent_bug_outline__";
-const BUG_OUTLINE_STYLE = `.${BUG_OUTLINE_CLASS} {
-  outline: 4px solid #ff1744 !important;
-  outline-offset: 3px !important;
-  box-shadow: 0 0 0 10px rgba(255, 23, 68, 0.35) !important;
-  position: relative !important;
-  z-index: 2147483645 !important;
-}`;
-/** Padding around getBoundingClientRect() — outline/shadow extend outside the box. */
+/** Padding around getBoundingClientRect() for the cropped bug screenshot. */
 const BUG_CLIP_PADDING_PX = 40;
-const OUTLINE_BLEED_PX = 16;
 const BUG_ANCHOR_MAX_CANDIDATES = 10;
-const BUG_OUTLINE_PAINT_MS = 80;
-
-async function installOutlineStyle(page: PageLike): Promise<void> {
-  try {
-    await page.addStyleTag({ content: BUG_OUTLINE_STYLE });
-  } catch (e) {
-    console.warn("installOutlineStyle: could not inject outline CSS:", e);
-  }
-}
 
 function padClip(
   box: BBox,
@@ -1257,7 +1237,6 @@ async function captureBugEvidence(
     .filter(({ bug }) => !!bug.anchorText?.trim());
   if (anchored.length === 0) return [];
 
-  await installOutlineStyle(page);
   const viewport = page.viewportSize();
   const out: Array<{ index: number; file: string }> = [];
 
@@ -1287,27 +1266,8 @@ async function captureBugEvidence(
       );
     }
 
-    let outlined = false;
     try {
-      await resolved.locator.evaluate((el: Element) =>
-        el.classList.add(BUG_OUTLINE_CLASS)
-      );
-      outlined = true;
-    } catch (e) {
-      console.warn(
-        `captureBugEvidence: bug #${index + 1} could not add outline class:`,
-        e
-      );
-    }
-
-    await new Promise<void>((r) => setTimeout(r, BUG_OUTLINE_PAINT_MS));
-
-    try {
-      const padded = padClip(
-        resolved.box,
-        BUG_CLIP_PADDING_PX + OUTLINE_BLEED_PX,
-        viewport
-      );
+      const padded = padClip(resolved.box, BUG_CLIP_PADDING_PX, viewport);
       const file = `pr-agent-bug-${index + 1}.png`;
       const png = await page.screenshot({ clip: padded, type: "png" });
       writeFileSync(file, png);
@@ -1320,16 +1280,6 @@ async function captureBugEvidence(
         `captureBugEvidence: bug #${index + 1} screenshot failed:`,
         e
       );
-    } finally {
-      if (outlined) {
-        try {
-          await resolved.locator.evaluate((el: Element) =>
-            el.classList.remove(BUG_OUTLINE_CLASS)
-          );
-        } catch {
-          /* best-effort cleanup */
-        }
-      }
     }
   }
 
