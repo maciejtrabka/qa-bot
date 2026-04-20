@@ -244,6 +244,24 @@ const bugSchema = z.object({
     .string()
     .nullish()
     .describe("Optional short non-blocking context for this bug only."),
+  kind: z
+    .enum(["visual", "functional"])
+    .nullish()
+    .describe(
+      "Bug category. 'visual' = screenshot-only regression (invisible/illegible text, hidden/obscured controls, broken layout). 'functional' = behavior/logic/state/network regression. Omit = treated as 'functional'."
+    ),
+  anchorText: z
+    .string()
+    .nullish()
+    .describe(
+      "REQUIRED when kind='visual'. A short, distinctive fragment of visible text taken verbatim from (or immediately next to) the affected element as it appears on the screenshot. Used only to locate the element for cropped evidence — never invent text, only quote what is actually rendered."
+    ),
+  anchorHint: z
+    .string()
+    .nullish()
+    .describe(
+      "Optional free-form hint to disambiguate anchorText when it could match several places (e.g. 'card in bottom-right', 'third button in the header row'). English, short."
+    ),
 });
 
 const verdictSchema = z.object({
@@ -397,6 +415,9 @@ function collectBugs(verdict: Verdict): Bug[] {
       expectedResult: b.expectedResult?.trim() ?? "",
       actualResult: b.actualResult?.trim() ?? "",
       notes: b.notes?.trim() || undefined,
+      kind: b.kind ?? undefined,
+      anchorText: b.anchorText?.trim() || undefined,
+      anchorHint: b.anchorHint?.trim() || undefined,
     }))
     .filter((b) => b.title || b.actualResult || b.stepsToReproduce.length > 0);
 
@@ -493,11 +514,22 @@ function renderEnvironmentSection(env: QaEnvironment): string[] {
   ];
 }
 
-function formatQaVerdictComment(verdict: Verdict, env: QaEnvironment): string {
+function formatQaVerdictComment(
+  verdict: Verdict,
+  env: QaEnvironment,
+  evidence: Array<{ index: number; file: string }> = []
+): string {
   const bugs = collectBugs(verdict);
   const notes = verdict.notes?.trim()
     ? trimForPrComment(verdict.notes.trim(), 280)
     : "";
+
+  const evidenceByBug = new Map<number, string>();
+  for (const e of evidence) {
+    if (e?.file && Number.isInteger(e.index)) {
+      evidenceByBug.set(e.index, e.file);
+    }
+  }
 
   const parts: string[] = [
     "### PR gate failed",
@@ -522,6 +554,14 @@ function formatQaVerdictComment(verdict: Verdict, env: QaEnvironment): string {
 
   bugs.forEach((bug, i) => {
     parts.push(...DOUBLE_HR, ...renderBugSection(bug, i));
+    const file = evidenceByBug.get(i + 1);
+    if (file) {
+      parts.push(
+        "",
+        `> Visual evidence: \`${file}\` (workflow artifact **pr-agent-logs**).`,
+        ""
+      );
+    }
   });
 
   parts.push(...DOUBLE_HR, ...renderEnvironmentSection(env));
@@ -879,7 +919,10 @@ async function computeVerdict({
     '    "stepsToReproduce": string[],            //   1-5 imperative steps',
     '    "expectedResult": string,',
     '    "actualResult": string,',
-    '    "notes"?: string                         //   optional, scoped to this bug only',
+    '    "notes"?: string,                        //   optional, scoped to this bug only',
+    '    "kind"?: "visual" | "functional",        //   category — see rules below',
+    '    "anchorText"?: string,                   //   REQUIRED when kind="visual" — see rules below',
+    '    "anchorHint"?: string                    //   optional disambiguator when anchorText is ambiguous',
     "  }>,",
     '  "notes"?: string                          // optional non-blocking context (not per bug)',
     "}",
@@ -888,6 +931,12 @@ async function computeVerdict({
     "- Report EVERY blocking issue (functional AND visual) as its own object.",
     "- Do NOT combine two different bugs into a single object.",
     "- Do NOT use the legacy top-level `headline` / `stepsToReproduce` / `expectedResult` / `actualResult` / `blockingFindings` fields.",
+    "",
+    "Rules for `kind` / `anchorText` / `anchorHint`:",
+    "- `kind` classifies the bug: use `'visual'` for regressions that are only visible on screenshots (invisible / illegible text, same-as-background color, hidden or obscured controls, broken layout, low contrast). Use `'functional'` for anything else (broken handler, wrong state, failed fetch, wrong content). If unsure, omit `kind` — it is treated as `'functional'`.",
+    "- When `kind === 'visual'`, you MUST also provide `anchorText`: a short, DISTINCTIVE fragment of visible text taken VERBATIM from (or immediately next to) the affected element on the screenshot. It is used only to locate the element for cropped evidence — it is NOT a test step. Never invent text: quote what is actually rendered. Prefer something unique in the page (a label, a heading, a specific number) over common words.",
+    "- If the same anchorText could match several elements on the page, add `anchorHint` with a brief English disambiguator (e.g. 'card in the bottom-right', 'third button in the header row', 'second list item'). Keep it short — it is a hint for a human / script, not a sentence.",
+    "- For `kind === 'functional'`, `anchorText` is optional and usually not needed.",
   ].join("\n");
 
   const result = await generateText({
@@ -958,6 +1007,171 @@ function tryParseJson(s: string): unknown | undefined {
   } catch {
     return undefined;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Per-visual-bug evidence: resolve anchorText to a Playwright locator, outline
+// the element with a red frame injected via CSS, and save a padded-clip viewport
+// screenshot as `pr-agent-bug-<n>.png`. Only triggered when qaPassed === false.
+// Failures here are non-fatal: we just log and skip cropping for that bug.
+// ---------------------------------------------------------------------------
+
+type BBox = { x: number; y: number; width: number; height: number };
+
+type LocatorLike = {
+  count(): Promise<number>;
+  nth(index: number): LocatorLike;
+  first(): LocatorLike;
+  isVisible(): Promise<boolean>;
+  boundingBox(): Promise<BBox | null>;
+  evaluate<R = void>(fn: (el: Element) => R): Promise<R>;
+};
+
+type PageLike = {
+  getByText(text: string, options?: { exact?: boolean }): LocatorLike;
+  viewportSize(): { width: number; height: number } | null;
+  addStyleTag(options: { content: string }): Promise<unknown>;
+  screenshot(options?: {
+    clip?: BBox;
+    fullPage?: boolean;
+    type?: "png" | "jpeg";
+  }): Promise<Buffer>;
+};
+
+const BUG_OUTLINE_CLASS = "__pr_agent_bug_outline__";
+const BUG_OUTLINE_STYLE = `.${BUG_OUTLINE_CLASS} { outline: 4px solid #ff1744 !important; outline-offset: 2px !important; box-shadow: 0 0 0 8px rgba(255, 23, 68, 0.25) !important; }`;
+const BUG_CLIP_PADDING_PX = 32;
+const BUG_ANCHOR_MAX_CANDIDATES = 10;
+
+async function installOutlineStyle(page: PageLike): Promise<void> {
+  try {
+    await page.addStyleTag({ content: BUG_OUTLINE_STYLE });
+  } catch (e) {
+    console.warn("installOutlineStyle: could not inject outline CSS:", e);
+  }
+}
+
+function padClip(
+  box: BBox,
+  pad: number,
+  viewport: { width: number; height: number } | null
+): BBox {
+  const vw = viewport?.width ?? Number.POSITIVE_INFINITY;
+  const vh = viewport?.height ?? Number.POSITIVE_INFINITY;
+  const x = Math.max(0, Math.floor(box.x - pad));
+  const y = Math.max(0, Math.floor(box.y - pad));
+  const rightBound = Math.min(vw, Math.ceil(box.x + box.width + pad));
+  const bottomBound = Math.min(vh, Math.ceil(box.y + box.height + pad));
+  const width = Math.max(1, rightBound - x);
+  const height = Math.max(1, bottomBound - y);
+  return { x, y, width, height };
+}
+
+async function firstVisibleInViewport(
+  locator: LocatorLike,
+  viewport: { width: number; height: number } | null
+): Promise<{ locator: LocatorLike; box: BBox } | null> {
+  const count = await locator.count().catch(() => 0);
+  if (count === 0) return null;
+  const vw = viewport?.width ?? Number.POSITIVE_INFINITY;
+  const vh = viewport?.height ?? Number.POSITIVE_INFINITY;
+  const cap = Math.min(count, BUG_ANCHOR_MAX_CANDIDATES);
+  for (let i = 0; i < cap; i++) {
+    const candidate = locator.nth(i);
+    const visible = await candidate.isVisible().catch(() => false);
+    if (!visible) continue;
+    const box = await candidate.boundingBox().catch(() => null);
+    if (!box || box.width <= 0 || box.height <= 0) continue;
+    // Must overlap viewport at least partially.
+    if (box.x + box.width <= 0 || box.y + box.height <= 0) continue;
+    if (box.x >= vw || box.y >= vh) continue;
+    return { locator: candidate, box };
+  }
+  return null;
+}
+
+async function captureBugEvidence(
+  page: PageLike,
+  bugs: Bug[]
+): Promise<Array<{ index: number; file: string }>> {
+  const visuals = bugs
+    .map((bug, index) => ({ bug, index }))
+    .filter(
+      ({ bug }) => bug.kind === "visual" && !!bug.anchorText?.trim()
+    );
+  if (visuals.length === 0) return [];
+
+  await installOutlineStyle(page);
+  const viewport = page.viewportSize();
+  const out: Array<{ index: number; file: string }> = [];
+
+  for (const { bug, index } of visuals) {
+    const text = (bug.anchorText ?? "").trim();
+    const hint = bug.anchorHint?.trim();
+    const hintSuffix = hint ? ` (hint: ${hint})` : "";
+    const locator = page.getByText(text, { exact: false });
+    const count = await locator.count().catch(() => 0);
+    if (count === 0) {
+      console.warn(
+        `captureBugEvidence: bug #${index + 1} anchor not found — anchorText="${text}"${hintSuffix}`
+      );
+      continue;
+    }
+
+    const resolved = await firstVisibleInViewport(locator, viewport);
+    if (!resolved) {
+      console.warn(
+        `captureBugEvidence: bug #${index + 1} anchor matched ${count} element(s) but none is visible in viewport — anchorText="${text}"${hintSuffix}`
+      );
+      continue;
+    }
+    if (count > 1) {
+      console.warn(
+        `captureBugEvidence: bug #${index + 1} anchor matched ${count} element(s); using the first visible one — anchorText="${text}"${hintSuffix}`
+      );
+    }
+
+    let outlined = false;
+    try {
+      await resolved.locator.evaluate((el) =>
+        el.classList.add("__pr_agent_bug_outline__")
+      );
+      outlined = true;
+    } catch (e) {
+      console.warn(
+        `captureBugEvidence: bug #${index + 1} could not add outline class:`,
+        e
+      );
+    }
+
+    try {
+      const padded = padClip(resolved.box, BUG_CLIP_PADDING_PX, viewport);
+      const file = `pr-agent-bug-${index + 1}.png`;
+      const png = await page.screenshot({ clip: padded, type: "png" });
+      writeFileSync(file, png);
+      console.log(
+        `captureBugEvidence: saved ${file} (${png.byteLength} bytes) for bug #${index + 1}`
+      );
+      out.push({ index: index + 1, file });
+    } catch (e) {
+      console.warn(
+        `captureBugEvidence: bug #${index + 1} screenshot failed:`,
+        e
+      );
+    } finally {
+      if (outlined) {
+        try {
+          await resolved.locator.evaluate((el) =>
+            el.classList.remove("__pr_agent_bug_outline__")
+          );
+        } catch {
+          /* best-effort cleanup */
+        }
+      }
+    }
+  }
+
+  return out;
 }
 
 let globalStagehand: Stagehand | null = null;
@@ -1054,7 +1268,15 @@ async function main() {
         userAgent: await safeGetUserAgent(page),
         runTimeUtc: new Date().toISOString(),
       };
-      writePrFailureComment(formatQaVerdictComment(verdict, env));
+      const bugs = collectBugs(verdict);
+      const evidence = await captureBugEvidence(
+        page as unknown as PageLike,
+        bugs
+      ).catch((e) => {
+        console.warn("captureBugEvidence failed:", e);
+        return [] as Array<{ index: number; file: string }>;
+      });
+      writePrFailureComment(formatQaVerdictComment(verdict, env, evidence));
       const firstBugTitle = verdict.bugs?.find((b) => b?.title?.trim())?.title?.trim();
       const hint =
         firstBugTitle ??
