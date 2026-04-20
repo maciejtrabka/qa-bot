@@ -43,29 +43,23 @@ const diagnosticsLogPath =
 const prAgentPrCommentPath =
   process.env.PR_AGENT_PR_COMMENT_FILE?.trim() || "pr-agent-pr-comment.md";
 
-// ----- Browser diagnostics (console + network) --------------------------------
-// Captured via Playwright listeners during the run and passed to the verdict
-// prompt. Prompt rules decide whether a given entry is bug-worthy (must be tied
-// to the PR change region); this code only collects signal.
+// ----- Browser diagnostics (console capture) ---------------------------------
+// Captures `console.error` / `console.warn` via Stagehand v3's CDP-backed
+// console bridge (the only page-level event its public API exposes, see
+// node_modules/@browserbasehq/stagehand/.../understudy/page.js → `on()`).
+// Uncaught page errors and network-level events (failed requests, HTTP ≥ 400)
+// are NOT captured here — Stagehand v3 doesn't expose those on the page, and
+// we deliberately don't reach into its private CDP session. Those signals may
+// still show up as `console.error` if the app logs them itself.
 
 type ConsoleEntry = {
-  kind: "console.error" | "console.warn" | "pageerror";
+  kind: "console.error" | "console.warn";
   text: string;
 };
 
-type NetworkEntry = {
-  kind: "requestfailed" | "http-error";
-  method: string;
-  url: string;
-  status?: number;
-  failure?: string;
-};
-
 const MAX_CONSOLE_ENTRIES = 30;
-const MAX_NETWORK_ENTRIES = 30;
 
 const consoleEntries: ConsoleEntry[] = [];
-const networkEntries: NetworkEntry[] = [];
 
 function pushCapped<T>(arr: T[], value: T, cap: number): void {
   arr.push(value);
@@ -73,9 +67,9 @@ function pushCapped<T>(arr: T[], value: T, cap: number): void {
 }
 
 /**
- * Attach Playwright listeners to the page and record console errors/warnings,
- * uncaught exceptions, failed requests, and HTTP 4xx/5xx responses. Call this
- * BEFORE `page.goto(...)` so that load-time errors are also captured.
+ * Attach a console listener via Stagehand's page bridge and record
+ * `console.error` / `console.warn` entries. Call this BEFORE `page.goto(...)`
+ * so that load-time errors are also captured.
  */
 function attachDiagnosticsListeners(page: unknown): void {
   type PageLike = {
@@ -83,133 +77,52 @@ function attachDiagnosticsListeners(page: unknown): void {
   };
   const p = page as PageLike;
 
-  const safeOn = (event: string, handler: (...args: unknown[]) => void) => {
-    try {
-      p.on(event, handler);
-    } catch (e) {
-      console.warn(`attachDiagnosticsListeners: could not subscribe to ${event}`, e);
-    }
-  };
-
-  safeOn("console", (msg: unknown) => {
-    try {
-      const m = msg as { type?: () => string; text?: () => string };
-      const type = m.type?.();
-      if (type !== "error" && type !== "warning") return;
-      const text = String(m.text?.() ?? "").slice(0, 500);
-      if (!text) return;
-      pushCapped(
-        consoleEntries,
-        {
-          kind: type === "error" ? "console.error" : "console.warn",
-          text,
-        },
-        MAX_CONSOLE_ENTRIES
-      );
-    } catch {
-      /* best-effort */
-    }
-  });
-
-  safeOn("pageerror", (err: unknown) => {
-    try {
-      const e = err as { name?: string; message?: string };
-      const text = `${e.name ?? "Error"}: ${e.message ?? String(err)}`.slice(0, 500);
-      pushCapped(consoleEntries, { kind: "pageerror", text }, MAX_CONSOLE_ENTRIES);
-    } catch {
-      /* best-effort */
-    }
-  });
-
-  safeOn("requestfailed", (req: unknown) => {
-    try {
-      const r = req as {
-        failure?: () => { errorText?: string } | null;
-        method?: () => string;
-        url?: () => string;
-      };
-      const failure = r.failure?.()?.errorText ?? "";
-      // ERR_ABORTED is emitted when the page navigates / reloads and in-flight
-      // requests are cancelled — not a real failure.
-      if (failure.includes("ERR_ABORTED")) return;
-      pushCapped(
-        networkEntries,
-        {
-          kind: "requestfailed",
-          method: r.method?.() ?? "GET",
-          url: String(r.url?.() ?? "").slice(0, 300),
-          failure: String(failure).slice(0, 200),
-        },
-        MAX_NETWORK_ENTRIES
-      );
-    } catch {
-      /* best-effort */
-    }
-  });
-
-  safeOn("response", (res: unknown) => {
-    try {
-      const r = res as {
-        status?: () => number;
-        url?: () => string;
-        request?: () => { method?: () => string } | null;
-      };
-      const status = r.status?.();
-      if (typeof status !== "number" || status < 400) return;
-      pushCapped(
-        networkEntries,
-        {
-          kind: "http-error",
-          method: r.request?.()?.method?.() ?? "GET",
-          url: String(r.url?.() ?? "").slice(0, 300),
-          status,
-        },
-        MAX_NETWORK_ENTRIES
-      );
-    } catch {
-      /* best-effort */
-    }
-  });
+  try {
+    p.on("console", (msg: unknown) => {
+      try {
+        const m = msg as { type?: () => string; text?: () => string };
+        const type = m.type?.();
+        if (type !== "error" && type !== "warning") return;
+        const text = String(m.text?.() ?? "").slice(0, 500);
+        if (!text) return;
+        pushCapped(
+          consoleEntries,
+          {
+            kind: type === "error" ? "console.error" : "console.warn",
+            text,
+          },
+          MAX_CONSOLE_ENTRIES
+        );
+      } catch {
+        /* best-effort */
+      }
+    });
+  } catch (e) {
+    console.warn("attachDiagnosticsListeners: could not subscribe to console", e);
+  }
 }
 
 function formatDiagnosticsBlock(): string {
-  const hasConsole = consoleEntries.length > 0;
-  const hasNetwork = networkEntries.length > 0;
-
-  if (!hasConsole && !hasNetwork) {
+  if (consoleEntries.length === 0) {
     return [
-      "## Console / network capture",
+      "## Console capture",
       "",
-      "No console errors/warnings, uncaught exceptions, failed requests, or HTTP ≥ 400 responses were observed during this run.",
+      "No `console.error` / `console.warn` entries were captured during this run.",
+      "",
+      "_Note: only browser console is tapped. Uncaught page exceptions and network failures are not captured here — infer those only if they surface as explicit `console.error` messages._",
     ].join("\n");
   }
 
-  const lines: string[] = ["## Console / network capture", ""];
+  const lines: string[] = ["## Console capture", ""];
 
-  lines.push("### Console");
-  if (hasConsole) {
-    for (const e of consoleEntries) {
-      lines.push(`- [${e.kind}] ${e.text}`);
-    }
-  } else {
-    lines.push("- (no errors or warnings)");
+  for (const e of consoleEntries) {
+    lines.push(`- [${e.kind}] ${e.text}`);
   }
+
   lines.push("");
-
-  lines.push("### Network (failed or HTTP ≥ 400)");
-  if (hasNetwork) {
-    for (const e of networkEntries) {
-      const suffix =
-        e.status != null
-          ? ` [${e.status}]`
-          : e.failure
-            ? ` [${e.failure}]`
-            : "";
-      lines.push(`- ${e.kind}: ${e.method} ${e.url}${suffix}`);
-    }
-  } else {
-    lines.push("- (no failed requests)");
-  }
+  lines.push(
+    "_Note: only browser console is tapped. Uncaught page exceptions and network failures are not captured here — infer those only if they surface as explicit `console.error` messages above._"
+  );
 
   return lines.join("\n");
 }
@@ -812,7 +725,7 @@ async function computeVerdict({
     console.warn(`Could not write diagnostics log to ${diagnosticsLogPath}:`, e);
   }
   console.log(
-    `Diagnostics captured: ${consoleEntries.length} console entry(ies), ${networkEntries.length} network entry(ies).`
+    `Diagnostics captured: ${consoleEntries.length} console entry(ies).`
   );
 
   let viewportPng: Buffer | null = null;
