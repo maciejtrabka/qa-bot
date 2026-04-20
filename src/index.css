@@ -233,6 +233,16 @@ body {
   border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
+.interactive-card.demo-card--weather {
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  box-shadow: var(--shadow), inset 5px 0 0 var(--accent);
+}
+
+.interactive-card.demo-card--weather [data-testid="weather-output"]
+  .interactive-msg-error {
+  color: var(--card);
+}
+
 .interactive-title {
   margin: 0 0 0.2rem;
   font-size: 1.05rem;

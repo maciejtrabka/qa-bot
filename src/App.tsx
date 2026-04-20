@@ -43,7 +43,7 @@ const WEEK: { day: string; slots: string[] }[] = [
 
 /** Publiczne API — bez kluczy; przydatne do regresji w PR (URL, parsowanie JSON, stany UI). */
 const OPEN_METEO_KRK =
-  "https://api.open-meteo.com/v1/forecast?latitude=50.0614&longitude=19.9366&current=temperature_2m&timezone=auto";
+  "https://api.open-meteo.c0m/v1/forecast?latitude=50.0614&longitude=19.9366&current=temperature_2m&timezone=auto";
 
 /** Kanoniczny host API (stary frankfurter.app robi 301 — fetch z przeglądarki bywa zawodny). */
 const FRANKFURTER_EUR_PLN =
@@ -213,7 +213,7 @@ export default function App() {
               </p>
 
               <div className="demo-grid">
-                <article className="interactive-card">
+                <article className="interactive-card demo-card--weather">
                   <h3 className="interactive-title">Pogoda · Kraków</h3>
                   <p className="interactive-api">Open-Meteo</p>
                   <button
