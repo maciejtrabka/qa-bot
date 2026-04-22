@@ -17,3 +17,7 @@ AGENTS.md
 
 # Cursor (lokalne skille / reguły — nie wersjonujemy jak kodu produktu)
 .cursor/
+
+# Wyjątek: skill szablonowany przez packages/create-pr-browser-agent (npm)
+!packages/create-pr-browser-agent/templates/.cursor/
+!packages/create-pr-browser-agent/templates/.cursor/**

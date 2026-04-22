@@ -21,6 +21,16 @@ npm run agent:pr-browser
 
 Szczegóły, sekrety i branch protection: [docs/PR-AGENT-QA.md](docs/PR-AGENT-QA.md).
 
+## Inny projekt — scaffold bez kopiowania demo
+
+Z katalogu docelowej aplikacji (root z `package.json`):
+
+```bash
+npm create pr-browser-agent@latest
+```
+
+Opis: [docs/PR-AGENT-PORTABLE-SETUP.md](docs/PR-AGENT-PORTABLE-SETUP.md).
+
 ## Wymagany check (blokada merge)
 
 W GitHub: Branch protection dla `main` → wymagaj statusu **`pr_browser_agent`**.

@@ -1,0 +1,33 @@
+{
+  "name": "create-pr-browser-agent",
+  "version": "0.1.2",
+  "description": "Scaffold PR browser agent (GitHub Actions, Stagehand, OpenRouter) — no demo app",
+  "type": "module",
+  "bin": {
+    "create-pr-browser-agent": "cli.mjs"
+  },
+  "files": [
+    "cli.mjs",
+    "templates"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "github-actions",
+    "pull-request",
+    "qa",
+    "stagehand",
+    "openrouter",
+    "scaffold"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maciejtrabka/qa-bot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/maciejtrabka/qa-bot/issues"
+  },
+  "homepage": "https://github.com/maciejtrabka/qa-bot#readme"
+}

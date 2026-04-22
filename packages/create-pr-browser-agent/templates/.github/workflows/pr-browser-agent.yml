@@ -1,0 +1,130 @@
+# PR-only: Stagehand (LOCAL) + OpenRouter — QA wg prompta (plik lub zmienna), werdykt w extract.
+# Nie uruchamia się na push do main bez PR.
+
+name: PR browser agent
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  # Ręczne uruchomienie z Actions — ten sam check `pr_browser_agent` (branch protection).
+  workflow_dispatch:
+    inputs:
+      prompt_file:
+        description: "Ścieżka do pliku z promptem QA (względem root repo)"
+        type: string
+        required: false
+        default: pr-agent-qa-prompt.md
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-browser-agent-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  pr_browser_agent:
+    name: pr_browser_agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout (PR head albo SHA z ręcznego uruchomienia)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        # Intentionally not `npm ci`: CI npm 10.8.2 on node 20 rejects the same
+        # lockfile that npm 10.8.2 accepts locally (nested picomatch edge case).
+        # For the MVP gate we prefer `npm install` to stay unblocked; revisit if flaky.
+        run: npm install --no-audit --no-fund
+
+      - name: Build site
+        run: npm run build
+
+      - name: Install Playwright Chromium (Stagehand LOCAL)
+        run: npx playwright install --with-deps chromium
+
+      - name: Materialize PR context for agent
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p pr-context
+          NUM="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          gh pr view "$NUM" --repo "$REPO" --json title,body \
+            --jq '{title: (.title // ""), body: (.body // "")}' > pr-context/pr.json
+          gh pr diff "$NUM" --repo "$REPO" --name-only 2>/dev/null | head -n 500 > pr-context/files.txt || true
+          ( gh pr diff "$NUM" --repo "$REPO" --patch 2>/dev/null || true ) | head -c 120000 > pr-context/diff.patch
+
+      - name: Start static server
+        run: |
+          npx serve dist -l 9333 &
+          for i in $(seq 1 60); do
+            if curl -sf "http://127.0.0.1:9333/" >/dev/null; then
+              echo "serve ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::serve did not become ready on 127.0.0.1:9333"
+          exit 1
+
+      - name: Run PR browser agent
+        id: agent
+        env:
+          BASE_URL: http://127.0.0.1:9333
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_HTTP_REFERER: https://github.com/${{ github.repository }}
+          STAGEHAND_MODEL: ${{ vars.STAGEHAND_MODEL }}
+          PR_AGENT_FAILURE_LOG: pr-agent-failure.txt
+          PR_AGENT_CONTEXT_DIR: pr-context
+          # Puste = użyj pliku PR_AGENT_PROMPT_FILE. Możesz wkleić prompt w Repo → Settings → Variables → PR_AGENT_QA_PROMPT
+          PR_AGENT_PROMPT: ${{ vars.PR_AGENT_QA_PROMPT }}
+          PR_AGENT_PROMPT_FILE: ${{ github.event_name == 'workflow_dispatch' && inputs.prompt_file || 'pr-agent-qa-prompt.md' }}
+        run: |
+          set -euo pipefail
+          npm run agent:pr-browser 2>&1 | tee pr-agent.log
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-agent-logs
+          path: |
+            pr-agent.log
+            pr-agent-failure.txt
+            pr-agent-pr-comment.md
+            pr-agent-screenshot-viewport.png
+            pr-agent-screenshot-fullpage.png
+            pr-agent-verdict-raw.txt
+            pr-agent-diagnostics.txt
+            pr-agent-bug-*.png
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Comment on PR when agent failed
+        if: failure() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ ! -f pr-agent-pr-comment.md ]; then
+            printf '%s\n' \
+              "### PR gate failed" \
+              "" \
+              "Missing \`pr-agent-pr-comment.md\` — see workflow artifact **pr-agent-logs** for this run." \
+              "" \
+              "<sub>Check: \`pr_browser_agent\` (workflow *PR browser agent*).</sub>" \
+              > pr-agent-pr-comment.md
+          fi
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file pr-agent-pr-comment.md --repo "${{ github.repository }}"
