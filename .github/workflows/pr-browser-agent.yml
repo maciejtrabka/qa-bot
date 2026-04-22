@@ -108,6 +108,7 @@ jobs:
             pr-agent-screenshot-fullpage.png
             pr-agent-verdict-raw.txt
             pr-agent-diagnostics.txt
+            pr-agent-contrast.json
             pr-agent-bug-*.png
           retention-days: 7
           if-no-files-found: ignore

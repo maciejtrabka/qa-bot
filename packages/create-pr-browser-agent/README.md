@@ -30,6 +30,8 @@ npm create pr-browser-agent@latest
 | Variable | `PR_AGENT_QA_PROMPT` | No | Full QA prompt text; if set, overrides `pr-agent-qa-prompt.md`. |
 | Variable | `PR_AGENT_VISION` | No | `0` = text-only verdict (no screenshots). |
 | Variable | `PR_AGENT_RUNS` | No | Verdict runs (default `2`). Use `1` for faster iteration. |
+| Variable | `PR_AGENT_CONTRAST_SCAN` | No | `0` disables the in-browser text/background contrast table. Default: on. |
+| Variable | `PR_AGENT_CONTRAST_STRICT` | No | `1` **fails** the job on near-1.0 text/background pairs even if the model passes. Default: `0` (table + prompt only). |
 
 Optional: enable branch protection on `main` and require status check **`pr_browser_agent`**.
 

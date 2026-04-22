@@ -4,9 +4,10 @@
  * Merge gate: structured verdict — qaPassed must be true.
  *
  * Verdict step uses a vision-capable LLM call by default (screenshots + a11y tree +
- * PR context), so the agent also catches visual-only regressions that the DOM tree
- * alone would miss. Disable with PR_AGENT_VISION=0 to fall back to Stagehand's
- * text-only `extract()`.
+ * optional DOM text contrast heuristics + PR context), so the agent is likelier
+ * to catch “invisible” copy (text color ≈ background, often paired with
+ * `aria-hidden`). Disable vision with PR_AGENT_VISION=0; disable contrast with
+ * PR_AGENT_CONTRAST_SCAN=0.
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -53,6 +54,44 @@ const failureLogPath = process.env.PR_AGENT_FAILURE_LOG ?? "pr-agent-failure.txt
 /** Where to dump the captured console/network diagnostics for the artifact. */
 const diagnosticsLogPath =
   process.env.PR_AGENT_DIAGNOSTICS_LOG?.trim() || "pr-agent-diagnostics.txt";
+
+/** JSON dump of DOM text contrast heuristics (for CI artifacts and debugging). */
+const contrastLogPath = process.env.PR_AGENT_CONTRAST_LOG?.trim() || "pr-agent-contrast.json";
+
+/** Set `0` to skip the in-page text contrast pass (faster, weaker on invisible text). */
+const contrastScanEnabled =
+  (process.env.PR_AGENT_CONTRAST_SCAN ?? "1").trim().toLowerCase() !== "0";
+
+/**
+ * When `1`, if the in-page pass finds any text/background pair with a WCAG
+ * ratio below the strict threshold (same-color / invisible text), the gate
+ * **fails** even if the model returned `qaPassed`. Default **off** so
+ * existing pipelines are not surprised — set to `1` in repo Variables when
+ * you want a hard fail for truly invisible text.
+ */
+const contrastStrictGateEnabled =
+  (process.env.PR_AGENT_CONTRAST_STRICT ?? "0").trim().toLowerCase() === "1";
+
+const contrastStrictMaxRatio = (() => {
+  const raw = (process.env.PR_AGENT_CONTRAST_STRICT_MAX_RATIO ?? "1.08").trim();
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n) || n < 1 || n > 1.2) return 1.08;
+  return n;
+})();
+
+const contrastListMaxRatio = (() => {
+  const raw = (process.env.PR_AGENT_CONTRAST_LIST_MAX_RATIO ?? "1.35").trim();
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n) || n < 1) return 1.35;
+  return n;
+})();
+
+const contrastMaxRows = (() => {
+  const raw = (process.env.PR_AGENT_CONTRAST_MAX_ROWS ?? "35").trim();
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return 35;
+  return Math.min(n, 80);
+})();
 
 /** Short markdown for `gh pr comment` (written on failure; workflow reads this file). */
 const prAgentPrCommentPath =
@@ -140,6 +179,297 @@ function formatDiagnosticsBlock(): string {
   );
 
   return lines.join("\n");
+}
+
+// ----- DOM text contrast (WCAG luminance, no LLM) ---------------------------
+// Surfaces text whose foreground/resolved background ratio is near 1.0 even
+// when screenshots look “empty” and the a11y tree omits `aria-hidden` content.
+
+type ContrastFinding = {
+  textSnippet: string;
+  contrastRatio: number;
+  fg: string;
+  bg: string;
+  selectorHint: string;
+  ariaHidden: boolean;
+  tag: string;
+};
+
+type ContrastScanResult = {
+  findings: ContrastFinding[];
+  strictHits: ContrastFinding[];
+};
+
+type PageEval = {
+  evaluate: <R, A>(pageFunction: (arg: A) => R, arg: A) => Promise<R>;
+};
+
+/**
+ * In-page pass: text nodes, computed `color` vs effective opaque background
+ * (walks ancestors). Injects one JSON row per low-contrast case for the
+ * verdict prompt. Best-effort only — gradients/images are not modeled.
+ */
+async function runDomTextContrastScan(page: unknown): Promise<ContrastScanResult | null> {
+  if (!contrastScanEnabled) {
+    return null;
+  }
+  const p = page as PageEval;
+  if (typeof p.evaluate !== "function") {
+    console.warn("runDomTextContrastScan: page.evaluate is not available; skipping.");
+    return null;
+  }
+  try {
+    const listMax = contrastListMaxRatio;
+    const maxRows = contrastMaxRows;
+    const data = (await p.evaluate(
+      (opts: { listMax: number; maxRows: number }) => {
+        const listMaxI = opts.listMax;
+        const cap = opts.maxRows;
+        const gcs = (el: Element) => window.getComputedStyle(el);
+        const bgStr = (rgb: { r: number; g: number; b: number }) => `rgb(${Math.round(rgb.r)},${Math.round(rgb.g)},${Math.round(rgb.b)})`;
+
+        function parseRgbToRgba(
+          s: string
+        ): { r: number; g: number; b: number; a: number } | null {
+          const t = s.trim();
+          if (t === "transparent" || t === "rgba(0, 0, 0, 0)" || t === "rgba(0,0,0,0)")
+            return null;
+          const m = t.match(
+            /^rgba?\s*\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)$/i
+          );
+          if (!m) return null;
+          return {
+            r: Math.min(255, Math.max(0, +m[1])),
+            g: Math.min(255, Math.max(0, +m[2])),
+            b: Math.min(255, Math.max(0, +m[3])),
+            a: m[4] === undefined ? 1 : Math.min(1, Math.max(0, +m[4])),
+          };
+        }
+
+        function srgbToLin(u: number): number {
+          const c = u / 255;
+          return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        }
+
+        function relLum(rgb: { r: number; g: number; b: number }): number {
+          const r = srgbToLin(rgb.r);
+          const g = srgbToLin(rgb.g);
+          const b = srgbToLin(rgb.b);
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        }
+
+        function contrastRatio(L1: number, L2: number): number {
+          return (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
+        }
+
+        function resolveOpaqueBackground(el: Element | null): { r: number; g: number; b: number } {
+          let n: Element | null = el;
+          for (let depth = 0; n && depth < 40; n = n.parentElement, depth += 1) {
+            const bg = parseRgbToRgba(gcs(n).backgroundColor);
+            if (bg && bg.a > 0.9) {
+              return { r: bg.r, g: bg.g, b: bg.b };
+            }
+          }
+          return { r: 255, g: 255, b: 255 };
+        }
+
+        function selectorHint(el: Element): string {
+          if (el.id) return `${el.tagName.toLowerCase()}#${el.id.slice(0, 80)}`;
+          const cl =
+            el instanceof HTMLElement && el.className && typeof el.className === "string"
+              ? el.className
+                  .trim()
+                  .split(/\s+/)
+                  .filter(Boolean)
+                  .slice(0, 2)
+              : [];
+          if (cl.length) return `${el.tagName.toLowerCase()}.${cl.join(".")}`;
+          return el.tagName.toLowerCase();
+        }
+
+        const raw: Array<{
+          textSnippet: string;
+          contrastRatio: number;
+          fg: string;
+          bg: string;
+          selectorHint: string;
+          ariaHidden: boolean;
+          tag: string;
+        }> = [];
+
+        const walk = document.createTreeWalker(
+          document.body,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode: (node) => {
+              const t = (node as Text).data?.replace(/\s+/g, " ").trim() ?? "";
+              if (t.length < 3) return NodeFilter.FILTER_REJECT;
+              const par = (node as Text).parentElement;
+              if (!par) return NodeFilter.FILTER_REJECT;
+              const name = par.nodeName.toLowerCase();
+              if (name === "script" || name === "style" || name === "noscript") {
+                return NodeFilter.FILTER_REJECT;
+              }
+              return NodeFilter.FILTER_ACCEPT;
+            },
+          }
+        );
+
+        const seen = new Set<string>();
+        const root = document.documentElement;
+        for (;;) {
+          const n = walk.nextNode() as Text | null;
+          if (!n) break;
+          const el = n.parentElement;
+          if (!el) continue;
+          if (!root.contains(el)) continue;
+          const textSnippet = n.data?.replace(/\s+/g, " ").trim() ?? "";
+          if (textSnippet.length < 3 || textSnippet.length > 140) continue;
+
+          const cs = gcs(el);
+          if (cs.visibility === "hidden" || cs.display === "none" || +cs.opacity < 0.05) {
+            continue;
+          }
+          const r = el.getBoundingClientRect();
+          if (r.width < 1 && r.height < 1) continue;
+          if (r.bottom < 0 || r.right < 0) continue;
+
+          const fc = parseRgbToRgba(cs.color);
+          if (!fc || fc.a < 0.08) continue;
+          const fgL = relLum({ r: fc.r, g: fc.g, b: fc.b });
+          const brgb = resolveOpaqueBackground(el);
+          const bgL = relLum(brgb);
+          const ratio = contrastRatio(fgL, bgL);
+
+          if (ratio > listMaxI) continue;
+          if (textSnippet.length > 120) continue;
+          const key = `${selectorHint(el)}|${textSnippet.slice(0, 60)}|${Math.round(ratio * 1000)}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+
+          raw.push({
+            textSnippet: textSnippet,
+            contrastRatio: Math.round(ratio * 1000) / 1000,
+            fg: cs.color,
+            bg: bgStr(brgb),
+            selectorHint: selectorHint(el),
+            ariaHidden: el.closest("[aria-hidden='true']") != null,
+            tag: el.tagName.toLowerCase(),
+          });
+          if (raw.length > cap * 2) {
+            /* avoid pathological pages */
+            break;
+          }
+        }
+
+        raw.sort((a, b) => a.contrastRatio - b.contrastRatio);
+        return raw.slice(0, cap);
+      },
+      { listMax: listMax, maxRows: maxRows }
+    )) as ContrastFinding[];
+
+    const list = data ?? [];
+    const strictHits = list.filter((f) => f.contrastRatio < contrastStrictMaxRatio);
+
+    return { findings: list, strictHits };
+  } catch (e) {
+    console.warn("runDomTextContrastScan failed:", e);
+    return { findings: [], strictHits: [] };
+  }
+}
+
+function formatContrastBlockForPrompt(scan: ContrastScanResult | null): string {
+  if (!scan) {
+    return [
+      "## DOM text contrast (machine check)",
+      "",
+      "Contrast pass was not run (disabled or not supported on this `page`).",
+      "",
+    ].join("\n");
+  }
+  if (scan.findings.length === 0) {
+    return [
+      "## DOM text contrast (machine check)",
+      "",
+      "No in-document text runs had an unusually low foreground/background ratio in this snapshot.",
+      "",
+    ].join("\n");
+  }
+
+  const lines: string[] = [
+    "## DOM text contrast (machine check)",
+    "",
+    "These rows were computed in the real browser: **text node → computed `color` → nearest opaque `background-color` up the tree**, then a WCAG-style contrast ratio (1.0 = same luminance, effectively invisible; higher is more readable).",
+    "",
+    "**`ariaHidden: true`** here means a parent has `aria-hidden=\"true\"`, so the accessibility snapshot may **omit** this string even though the pixels look blank — do not assume “no text” from the a11y tree alone for this case.",
+    "",
+    "### How to use this in your verdict (STRICT for the PR change region)",
+    "",
+    "- If a row is **in the PR change region** (touched file / section implied by the diff) and the ratio is **1.0–1.1** (or the row is clearly “same as background” even at ~1.15), treat it as a **BLOCKING** visual issue: the copy is not readable, even if the attached screenshots do not show letter shapes. Report it in `bugs[]` with `kind: 'visual'`.",
+    "- For `anchorText` when the sentence is not drawn visibly: use a **visible, stable** label in the same card or column (a heading, section title, or `POPULAR TAGS`-style label) and quote the **exact `textSnippet` from this table** in `expectedResult` / `actualResult` or `notes`.",
+    "- Do **not** report rows that are clearly **outside** the diff’s UI scope (ignore decorative site-wide content unrelated to the change).",
+    "- Do **not** use this table alone to claim something is “in the diff” if the path/class is nowhere in the PR file list; scope still comes from the PR context.",
+    "",
+  ];
+
+  lines.push("ratio | textSnippet | fg | bg | selector | ariaHidden");
+  for (const f of scan.findings) {
+    const a = f.ariaHidden ? "yes" : "no";
+    const snip = f.textSnippet.replace(/`/g, "'").replace(/\s+/g, " ").trim();
+    lines.push(
+      `${f.contrastRatio} | ${snip.slice(0, 100)} | ${f.fg} | ${f.bg} | \`${f.selectorHint}\` | ${a} (${f.tag})`
+    );
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+function makeSyntheticContrastBugs(
+  strictHits: ContrastFinding[]
+): { bugs: Bug[]; summary: string } {
+  if (strictHits.length === 0) {
+    return { bugs: [], summary: "" };
+  }
+  const first = strictHits[0]!;
+  const allSnips = strictHits
+    .map((h) => `"${h.textSnippet.replace(/\s+/g, " ").slice(0, 200)}"`)
+    .join("; ");
+  const anchor = first.textSnippet.replace(/\s+/g, " ").trim().slice(0, 120);
+  const b: Bug = {
+    title: "Text/background contrast is effectively 1:1 in the preview (invisible or unreadable copy)",
+    kind: "visual",
+    stepsToReproduce: [
+      "Open the PR preview and scroll the region containing the table entry below.",
+      "Optionally use devtools to read computed `color` and `background-color` for the same element — they match the machine row.",
+    ],
+    expectedResult: "Intended help or hint text must be visible (readable against its surface), not equal to the background in luminance for normal readers.",
+    actualResult: `Computed WCAG-style contrast is ~${first.contrastRatio} for: ${allSnips}. The snapshot machine-check lists the exact foreground, background, and hint selector.`,
+    notes:
+      "Raised by PR_AGENT_CONTRAST_STRICT (deterministic) because at least one text/background pair had a near-1.0 ratio.",
+    anchorText: anchor.length >= 2 ? anchor : `div.${first.tag}`,
+    anchorHint: "invisible or same-as-background text from DOM contrast list; crop may look like an empty area",
+  };
+  return { bugs: [b], summary: b.title };
+}
+
+function applyContrastStrictGate(
+  verdict: Verdict,
+  scan: ContrastScanResult | null
+): Verdict {
+  if (!contrastStrictGateEnabled || !scan || scan.strictHits.length === 0) {
+    return verdict;
+  }
+  if (!verdict.qaPassed) {
+    return verdict;
+  }
+  const { bugs, summary } = makeSyntheticContrastBugs(scan.strictHits);
+  if (bugs.length === 0) return verdict;
+  return {
+    ...verdict,
+    qaPassed: false,
+    whatYouChecked: [summary, verdict.whatYouChecked].filter(Boolean).join(" — ").slice(0, 400),
+    bugs: [...bugs, ...(verdict.bugs ?? [])],
+  };
 }
 
 const contextDir = (process.env.PR_AGENT_CONTEXT_DIR ?? "pr-context").replace(
@@ -723,6 +1053,7 @@ function buildVerdictPrompt(
   qaPrompt: string,
   pageText: string | undefined,
   hasScreenshots: boolean,
+  contrastBlock: string,
   diagnosticsBlock: string
 ): string {
   const parts: string[] = [
@@ -745,7 +1076,7 @@ function buildVerdictPrompt(
       "",
       "### Evidence rules for visual claims (STRICT)",
       "",
-      "- Any visual issue you report — in `bugs[]`, in a bug's `notes`, or in the top-level `notes` — MUST be anchored to a concrete observation on the attached screenshots: say what you actually see (or what is missing) in a specific region (e.g. 'the strip under the counter shows no hint text', 'the label blends into the card background and is unreadable', 'the button overlaps the badge').",
+      "- Any visual issue you report — in `bugs[]`, in a bug's `notes`, or in the top-level `notes` — MUST be anchored to a concrete observation on the attached screenshots: say what you actually see (or what is missing) in a specific region (e.g. 'the strip under the counter shows no hint text', 'the label blends into the card background and is unreadable', 'the button overlaps the badge'). **Exception:** the **DOM text contrast (machine check)** section may list a run with a near-1.0 ratio and `ariaHidden: yes` — the screenshot can look like a blank strip; for that, you may still file a **blocking** visual bug in the PR scope and cite the table row. Use a **visible** nearby heading or label for `anchorText` if the problem string is not readable in the PNG.",
       "- A CSS rule or a diff hunk is NOT visual evidence on its own. If the diff hints at a visual problem but the screenshots do not show it, state that explicitly: write 'diff hypothesis, not visually confirmed' and do NOT use hedged wording like 'may cause', 'might', 'could'.",
       "- If an element is present in the accessibility/DOM snapshot but is not visible on the screenshots (same color as its background, `visibility: hidden`, `opacity: 0`, clipped off-frame, covered by another element) AND it sits inside the PR change region, treat it as a BLOCKING visual bug on par with a broken handler. Create a dedicated entry in `bugs[]` for it; do not demote it to `notes`.",
       "- Low contrast also counts as a visual bug. 'Visible' is NOT automatically 'readable'. If text inside the PR change region is technically present on the screenshots but its contrast against the background is so low that the text is UNREADABLE, or CLEARLY LESS READABLE than the equivalent element in the same section / sibling components of the same type (e.g., placeholders in the other demo cards, labels in the other buttons, descriptions in the other list rows), treat it as a BLOCKING visual bug with its own entry in `bugs[]`. In `actualResult`, spell out the COMPARISON: what is unreadable, and what you are comparing it to (e.g., 'the placeholder on the FX card is barely distinguishable from the card background, while placeholders on the Weather / Cat / Slots cards are clearly readable muted gray text'). 'Readable' means recognizable at a glance — NOT 'I managed to make out the letters after staring at it'.",
@@ -756,9 +1087,13 @@ function buildVerdictPrompt(
     parts.push(
       "## Evidence",
       "",
-      "No screenshots are attached for this run — judge from the PR context and the accessibility/page text snapshot only.",
+      "No screenshots are attached for this run — rely on the **DOM text contrast (machine check)** (when present), the PR context, and the accessibility/page text snapshot. Scope findings to the PR change region.",
       ""
     );
+  }
+
+  if (contrastBlock.trim().length > 0) {
+    parts.push(contrastBlock, "");
   }
 
   if (pageText && pageText.trim().length > 0) {
@@ -796,9 +1131,9 @@ function buildVerdictPrompt(
 
 const VERDICT_SYSTEM_PROMPT = [
   "You are a senior QA engineer reviewing a pull request preview build.",
-  "You judge only the PR change region based on the PR context, attached screenshots, and the accessibility/page text snapshot.",
-  "Visual regressions that only show up in screenshots (invisible or illegible text, hidden/obscured controls, clearly broken layout) are blocking when they fall inside the PR change region.",
-  "Every visual claim in your verdict must be grounded in the attached screenshots, not in CSS rules from the diff. If the diff hints at a visual problem that the screenshots do not confirm, either omit it or state 'diff hypothesis, not visually confirmed' — do not use hedged wording like 'may cause' / 'might' / 'could'.",
+  "You judge only the PR change region using the PR context, attached screenshots (if any), the **DOM text contrast (machine check)** table when present, and the accessibility/page text snapshot.",
+  "Visual regressions (invisible or illegible text, same-as-background copy, `aria-hidden` text that the a11y tree omits, hidden/obscured controls, clearly broken layout) are blocking when they fall inside the PR change region — including rows from the **DOM text contrast** section with a near-1.0 ratio, even if the pixels look like empty space.",
+  "For normal UI issues, ground every visual claim in the attached screenshots. **Exception:** a row in the **DOM text contrast (machine check)** section (computed in-browser) is sufficient evidence of illegible or invisible *text* when the table gives a very low ratio for that string — the screenshot can show a featureless field; do not require visible letter-shapes. Pure CSS *hypotheses* from the diff without screenshots *or* contrast table support still use 'diff hypothesis, not visually confirmed' — do not use hedged wording like 'may cause' / 'might' / 'could' for that case.",
   "",
   "### Response format (STRICT)",
   "Your entire response must be ONE fenced JSON code block and nothing else:",
@@ -833,7 +1168,7 @@ const VERDICT_SYSTEM_PROMPT = [
   "",
   "Rules for `kind` / `anchorText` / `anchorHint`:",
   "- `kind` classifies the bug: use `'visual'` for regressions that are only visible on screenshots (invisible / illegible text, same-as-background color, hidden or obscured controls, broken layout, low contrast). Use `'functional'` for anything else (broken handler, wrong state, failed fetch, wrong content). If unsure, omit `kind` — it is treated as `'functional'`.",
-  "- When `kind === 'visual'`, you MUST also provide `anchorText`: a short, DISTINCTIVE fragment of visible text taken VERBATIM from (or immediately next to) the affected element on the screenshot. It is used only to locate the element for cropped evidence — it is NOT a test step. Never invent text: quote what is actually rendered. Prefer something unique in the page (a label, a heading, a specific number) over common words.",
+  "- When `kind === 'visual'`, you MUST also provide `anchorText`: a short, DISTINCTIVE fragment; prefer visible text on the **screenshot**; if the defect is the **DOM text contrast** row, use a **visible** nearby label in the same region, or a fragment of the `textSnippet` (Playwright may still locate the node) — never fabricate new strings that do not exist on the page or in the contrast table.",
   "- If the same anchorText could match several elements on the page, add `anchorHint` with a brief English disambiguator (e.g. 'card in the bottom-right', 'third button in the header row', 'second list item'). Keep it short — it is a hint for a human / script, not a sentence.",
   "- For `kind === 'functional'`, `anchorText` is optional and usually not needed.",
 ].join("\n");
@@ -1014,6 +1349,32 @@ async function computeVerdict({
     console.warn("Full-page screenshot failed:", e);
   }
 
+  const contrastScan = await runDomTextContrastScan(page);
+  try {
+    if (contrastScan) {
+      writeFileSync(
+        contrastLogPath,
+        JSON.stringify(contrastScan, null, 2) + "\n",
+        "utf8"
+      );
+      console.log(
+        `DOM text contrast: ${contrastScan.findings.length} table row(s), ` +
+          `${contrastScan.strictHits.length} strict (ratio < ${contrastStrictMaxRatio}). → ${contrastLogPath}`
+      );
+    }
+  } catch (e) {
+    console.warn(`Could not write ${contrastLogPath}:`, e);
+  }
+  const contrastBlock = formatContrastBlockForPrompt(contrastScan);
+
+  let pageText: string | undefined;
+  try {
+    const textSnap = await globalStagehand!.extract();
+    pageText = typeof textSnap?.pageText === "string" ? textSnap.pageText : undefined;
+  } catch (e) {
+    console.warn("Extracting a11y pageText failed:", e);
+  }
+
   if (!visionEnabled || (!viewportPng && !fullPagePng)) {
     if (!visionEnabled) {
       console.log("Vision disabled via PR_AGENT_VISION=0 — using Stagehand text extract (runs=1).");
@@ -1024,23 +1385,28 @@ async function computeVerdict({
     if (!stagehand) {
       throw new Error("Stagehand instance unavailable for text-only fallback.");
     }
-    const textVerdict = await stagehand.extract(
-      buildVerdictPrompt(prCtxBlock, qaPrompt, undefined, false, diagnosticsBlock),
+    const textVerdictRaw = await stagehand.extract(
+      buildVerdictPrompt(
+        prCtxBlock,
+        qaPrompt,
+        pageText,
+        false,
+        contrastBlock,
+        diagnosticsBlock
+      ),
       verdictSchema
     );
+    const textVerdict = applyContrastStrictGate(textVerdictRaw, contrastScan);
+    if (textVerdictRaw.qaPassed !== textVerdict.qaPassed) {
+      console.warn(
+        "PR_AGENT_CONTRAST_STRICT: gate flipped qaPassed (deterministic same-color text vs model)."
+      );
+    }
     return {
       verdict: textVerdict,
       runsTotal: 1,
       runsFlagged: textVerdict.qaPassed ? 0 : 1,
     };
-  }
-
-  let pageText: string | undefined;
-  try {
-    const textSnap = await globalStagehand!.extract();
-    pageText = typeof textSnap?.pageText === "string" ? textSnap.pageText : undefined;
-  } catch (e) {
-    console.warn("Extracting a11y pageText failed:", e);
   }
 
   const referer =
@@ -1064,6 +1430,7 @@ async function computeVerdict({
     qaPrompt,
     pageText,
     true,
+    contrastBlock,
     diagnosticsBlock
   );
   const imageParts: Array<{ type: "image"; image: Uint8Array; mediaType: string }> = [];
@@ -1097,15 +1464,24 @@ async function computeVerdict({
   }
 
   const aggregated = aggregateVerdicts(runs);
-  const runsFlagged = runs.filter((r) => !r.qaPassed).length;
+  const finalVerdict = applyContrastStrictGate(aggregated, contrastScan);
+  if (aggregated.qaPassed && !finalVerdict.qaPassed) {
+    console.warn(
+      "PR_AGENT_CONTRAST_STRICT: gate failed the build (near-1.0 text/background ratio; LLM had qaPassed=true)."
+    );
+  }
+  const llmRunsFlagged = runs.filter((r) => !r.qaPassed).length;
+  const runsFlagged = !finalVerdict.qaPassed
+    ? Math.max(llmRunsFlagged, 1)
+    : llmRunsFlagged;
 
   console.log(
-    `Aggregated verdict: qaPassed=${aggregated.qaPassed}, ` +
-      `runsFlagged=${runsFlagged}/${runs.length} (conservative: any fail blocks).`
+    `Aggregated verdict: qaPassed=${finalVerdict.qaPassed}, ` +
+      `runsFlagged=${runsFlagged}/${runs.length} (conservative: any fail blocks; strict contrast may add a fail).`
   );
 
   return {
-    verdict: aggregated,
+    verdict: finalVerdict,
     runsTotal: runs.length,
     runsFlagged,
   };
