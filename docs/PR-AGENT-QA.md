@@ -77,22 +77,6 @@ Oczekiwany efekt: job **`pr_browser_agent`** → zwykle **failure** + komentarz 
 
 Jeśli zamiast regresji logiki wolisz sprawdzić „martwy” przycisk (np. literówka w `data-testid` kontenera wyniku), **LLM może ten scenariusz przeoczyć** przy ogólnym prompcie i opisie „tylko kolor” — wtedy zaostrz instrukcje w promptcie QA (klik w CTA, oczekiwany efekt w DOM, porównanie z diffem).
 
-## Lokalnie
-
-```bash
-npm ci
-npm run build
-npx playwright install chromium
-npx serve dist -l 9333
-# drugi terminal:
-cp .env.example .env   # uzupełnij OPENROUTER_API_KEY
-export $(grep -v '^#' .env | xargs)   # albo ręcznie export OPENROUTER_API_KEY=...
-npm run agent:pr-browser
-```
-
-`BASE_URL` domyślnie to `http://127.0.0.1:9333`.  
-Opcjonalnie lokalnie: `PR_AGENT_PROMPT_FILE=inny-plik.md` albo `PR_AGENT_PROMPT='...'` (nadpisuje plik).
-
 ## Uwagi
 
 - Node na runnerze: **20.x** (ustawione w workflow; Stagehand wymaga współczesnego Node — trzymaj się wersji z joba, unikaj eksperymentalnych majorów na CI).

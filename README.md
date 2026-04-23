@@ -4,21 +4,6 @@ Witryna (React + Vite) do testów i workflow **PR browser agent**: przy PR do `m
 
 **Utrzymanie / intencja MVP (lokalnie, nie w repo):** zobacz **`AGENTS.md`** w katalogu projektu — m.in. różnica między iteracją na `main` a bramką na PR.
 
-## Szybki start (lokalnie)
-
-```bash
-npm ci
-npm run build
-npx playwright install chromium
-npx serve dist -l 9333
-```
-
-W drugim terminalu ustaw `OPENROUTER_API_KEY` i uruchom:
-
-```bash
-npm run agent:pr-browser
-```
-
 Szczegóły, sekrety i branch protection: [docs/PR-AGENT-QA.md](docs/PR-AGENT-QA.md).
 
 ## Inny projekt — scaffold bez kopiowania demo

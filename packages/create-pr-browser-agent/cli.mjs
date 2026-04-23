@@ -203,7 +203,8 @@ Next steps:
   1. npm install
   2. GitHub → Settings → Secrets and variables → Actions → add secret OPENROUTER_API_KEY
   3. Optional Variables: STAGEHAND_MODEL, PR_AGENT_QA_PROMPT, PR_AGENT_RUNS, PR_AGENT_VISION
-  4. Ensure "npm run build" outputs a static site (default workflow serves dist/ on port 9333 — adjust if needed)
+  4. Ensure "npm run build" outputs a static site — workflow auto-detects dist/, build/, out/, or public/ and serves it on port 9333
+  4a. Optional: create .nvmrc to pin Node version (workflow reads it; falls back to Node 20 if missing)
   5. Commit the new files and open a PR to main — branch protection can require check "pr_browser_agent"
 
 Docs: https://github.com/maciejtrabka/qa-bot/blob/main/docs/PR-AGENT-PORTABLE-SETUP.md

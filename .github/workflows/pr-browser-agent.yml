@@ -35,9 +35,18 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
+      - name: Determine Node version
+        id: node
+        run: |
+          if [ -f .nvmrc ]; then
+            echo "version=$(tr -d 'v \n\r' < .nvmrc)" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=20" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ steps.node.outputs.version }}
           cache: npm
 
       - name: Install dependencies
@@ -68,7 +77,19 @@ jobs:
 
       - name: Start static server
         run: |
-          npx serve dist -l 9333 &
+          STATIC_DIR=""
+          for candidate in dist build out public; do
+            if [ -d "$candidate" ]; then
+              STATIC_DIR="$candidate"
+              break
+            fi
+          done
+          if [ -z "$STATIC_DIR" ]; then
+            echo "::error::No static build folder found (looked for dist, build, out, public)"
+            exit 1
+          fi
+          echo "Serving $STATIC_DIR"
+          npx serve "$STATIC_DIR" -l 9333 &
           for i in $(seq 1 60); do
             if curl -sf "http://127.0.0.1:9333/" >/dev/null; then
               echo "serve ready"
