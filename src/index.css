@@ -252,6 +252,15 @@ body {
   color: var(--muted);
 }
 
+.interactive-card--counter {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--card));
+}
+
+.interactive-card--counter .interactive-hint {
+  color: color-mix(in srgb, var(--accent-soft) 55%, var(--card));
+}
+
 .interactive-output {
   margin-top: 1rem;
   min-height: 3rem;
