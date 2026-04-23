@@ -1,6 +1,6 @@
 {
   "name": "create-pr-browser-agent",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Scaffold PR browser agent (GitHub Actions, Stagehand, OpenRouter) — no demo app",
   "type": "module",
   "bin": {
