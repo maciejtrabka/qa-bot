@@ -1,6 +1,6 @@
 {
   "name": "create-pr-browser-agent",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Scaffold PR browser agent (GitHub Actions, Stagehand, OpenRouter). Runs QA in headless Chromium on every PR; supports optional login via GitHub Secrets so the agent can reach areas behind auth. No demo app.",
   "type": "module",
   "bin": {
