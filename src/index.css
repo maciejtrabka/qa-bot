@@ -233,6 +233,15 @@ body {
   border: 1px solid color-mix(in srgb, var(--fg) 8%, transparent);
 }
 
+.demo-card--cat {
+  border-color: #b8e0d4;
+  box-shadow: 0 18px 48px rgba(64, 129, 112, 0.12);
+}
+
+.demo-card--cat .interactive-title {
+  color: var(--card);
+}
+
 .interactive-title {
   margin: 0 0 0.2rem;
   font-size: 1.05rem;

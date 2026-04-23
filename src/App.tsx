@@ -95,7 +95,7 @@ export default function App() {
   const fetchCatFact = useCallback(async () => {
     setCatFact((c) => ({ ...c, loading: true, err: null }));
     try {
-      const r = await fetch("https://catfact.ninja/fact");
+      const r = await fetch("https://catfact.ninja/factx");
       if (!r.ok) throw new Error("http");
       const j = (await r.json()) as { fact?: string };
       if (typeof j.fact !== "string") throw new Error("shape");
@@ -249,7 +249,7 @@ export default function App() {
                   </div>
                 </article>
 
-                <article className="interactive-card">
+                <article className="interactive-card demo-card--cat">
                   <h3 className="interactive-title">Losowy fakt</h3>
                   <p className="interactive-api">catfact.ninja</p>
                   <button
