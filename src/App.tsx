@@ -80,7 +80,9 @@ export default function App() {
       const j = (await r.json()) as {
         current?: { temperature_2m?: number };
       };
-      const t = j.current?.temperature_2m;
+      const t = (
+        j.current as Record<string, number | undefined> | null | undefined
+      )?.temperature_2m_typo;
       if (typeof t !== "number") throw new Error("shape");
       setWeather({ c: Math.round(t * 10) / 10, err: null, loading: false });
     } catch {
@@ -213,7 +215,7 @@ export default function App() {
               </p>
 
               <div className="demo-grid">
-                <article className="interactive-card">
+                <article className="interactive-card demo-card--weather">
                   <h3 className="interactive-title">Pogoda · Kraków</h3>
                   <p className="interactive-api">Open-Meteo</p>
                   <button
