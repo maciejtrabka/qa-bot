@@ -59,6 +59,9 @@ Jeśli docelowy projekt ma inny katalog wyjścia (np. `build/`) albo inny port �
 | `PR_AGENT_QA_PROMPT` | Variable | Nie | Jeśli ustawione — **nadpisuje** plik promptu z repo (`PR_AGENT_PROMPT` w jobie) |
 | `PR_AGENT_VISION` | Variable | Nie | `0` — werdykt bez screenshotów (tylko `extract`; modele bez vision) |
 | `PR_AGENT_RUNS` | Variable | Nie | Domyślnie `2` w skrypcie; `1` szybsze przy strojeniu promptu |
+| `PR_AGENT_LOGIN_USER` | **Secret** | Nie | Login/email testowego konta. Gdy ustawione razem z hasłem, agent zaloguje się przed QA (selektory domyślne + opcjonalne overrides — patrz [PR-AGENT-QA.md](PR-AGENT-QA.md#opcjonalne-logowanie-obszar-zmiany-za-ekranem-logowania)). |
+| `PR_AGENT_LOGIN_PASSWORD` | **Secret** | Nie | Hasło. Wypełniane przez Stagehand/CDP — nie trafia do LLM ani do logów. |
+| `PR_AGENT_LOGIN_URL` / `*_SELECTOR` / `*_SUCCESS_*` / `PR_AGENT_LOGIN_STRICT` | Variable | Nie | Opcjonalne uszczegółowienie logowania (URL, selektory, warunek sukcesu, tryb strict). Szczegóły: [PR-AGENT-QA.md](PR-AGENT-QA.md#opcjonalne-logowanie-obszar-zmiany-za-ekranem-logowania). |
 
 Workflow przekazuje też `OPENROUTER_HTTP_REFERER` (identyfikacja w OpenRouter).
 

@@ -203,6 +203,10 @@ Next steps:
   1. npm install
   2. GitHub → Settings → Secrets and variables → Actions → add secret OPENROUTER_API_KEY
   3. Optional Variables: STAGEHAND_MODEL, PR_AGENT_QA_PROMPT, PR_AGENT_RUNS, PR_AGENT_VISION
+  3a. If the PR change area is behind a login, add Secrets PR_AGENT_LOGIN_USER and PR_AGENT_LOGIN_PASSWORD
+      (agent fills the form via Stagehand/CDP; password never leaves the browser).
+      Optional overrides as Variables: PR_AGENT_LOGIN_URL, PR_AGENT_LOGIN_{USER,PASSWORD,SUBMIT,SUCCESS}_SELECTOR,
+      PR_AGENT_LOGIN_SUCCESS_URL_INCLUDES, PR_AGENT_LOGIN_STRICT. See docs/PR-AGENT-QA.md.
   4. Ensure "npm run build" outputs a static site — workflow auto-detects dist/, build/, out/, or public/ and serves it on port 9333
   4a. Optional: create .nvmrc to pin Node version (workflow reads it; falls back to Node 20 if missing)
   5. Commit the new files and open a PR to main — branch protection can require check "pr_browser_agent"

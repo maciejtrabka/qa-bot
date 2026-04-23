@@ -1023,6 +1023,357 @@ function loadQaPrompt(): string {
   return text;
 }
 
+// ----- Optional login (credentials from GitHub Secrets) ---------------------
+// When PR_AGENT_LOGIN_USER + PR_AGENT_LOGIN_PASSWORD are set, we fill the
+// login form via Stagehand's locator API (CDP Input domain). Credentials go
+// straight to the browser — they are NOT sent to the LLM, and we never log
+// the password. The LLM only learns that a session is already authenticated
+// (see AUTH_SESSION_CONTEXT in buildActInstruction).
+
+type LoginLocator = {
+  isVisible: () => Promise<boolean>;
+  fill: (value: string) => Promise<void>;
+  click: () => Promise<void>;
+};
+
+type LoginPage = {
+  locator: (selector: string) => { first: () => LoginLocator };
+  goto: (
+    url: string,
+    options?: { waitUntil?: string; timeoutMs?: number }
+  ) => Promise<unknown>;
+  waitForLoadState: (state: string, timeoutMs?: number) => Promise<void>;
+  waitForTimeout: (ms: number) => Promise<void>;
+  waitForSelector: (
+    selector: string,
+    options?: { state?: string; timeout?: number }
+  ) => Promise<unknown>;
+  keyPress: (key: string, options?: { delay?: number }) => Promise<void>;
+  url: () => string;
+};
+
+type LoginConfig = {
+  user: string;
+  password: string;
+  loginUrl?: string;
+  userSelector?: string;
+  passwordSelector?: string;
+  submitSelector?: string;
+  successSelector?: string;
+  successUrlIncludes?: string;
+  timeoutMs: number;
+  strict: boolean;
+};
+
+const DEFAULT_USER_SELECTORS = [
+  "[data-testid='login-email']",
+  "[data-testid='login-username']",
+  "input[type='email']",
+  "input[name='email']",
+  "input[name='username']",
+  "input[autocomplete='username']",
+  "input[id='email']",
+  "input[id='username']",
+];
+
+const DEFAULT_PASSWORD_SELECTORS = [
+  "[data-testid='login-password']",
+  "input[type='password']",
+  "input[autocomplete='current-password']",
+];
+
+const DEFAULT_SUBMIT_SELECTORS = [
+  "[data-testid='login-submit']",
+  "button[type='submit']",
+  "input[type='submit']",
+];
+
+function readLoginConfig(): LoginConfig | null {
+  const user = process.env.PR_AGENT_LOGIN_USER?.trim();
+  const password = process.env.PR_AGENT_LOGIN_PASSWORD;
+  if (!user || !password) return null;
+  const rawTimeout = (process.env.PR_AGENT_LOGIN_TIMEOUT_MS ?? "8000").trim();
+  const parsed = Number.parseInt(rawTimeout, 10);
+  const timeoutMs = Math.max(
+    1_000,
+    Math.min(60_000, Number.isFinite(parsed) ? parsed : 8_000)
+  );
+  return {
+    user,
+    password,
+    loginUrl: process.env.PR_AGENT_LOGIN_URL?.trim() || undefined,
+    userSelector: process.env.PR_AGENT_LOGIN_USER_SELECTOR?.trim() || undefined,
+    passwordSelector: process.env.PR_AGENT_LOGIN_PASSWORD_SELECTOR?.trim() || undefined,
+    submitSelector: process.env.PR_AGENT_LOGIN_SUBMIT_SELECTOR?.trim() || undefined,
+    successSelector:
+      process.env.PR_AGENT_LOGIN_SUCCESS_SELECTOR?.trim() || undefined,
+    successUrlIncludes:
+      process.env.PR_AGENT_LOGIN_SUCCESS_URL_INCLUDES?.trim() || undefined,
+    timeoutMs,
+    strict:
+      (process.env.PR_AGENT_LOGIN_STRICT ?? "0").trim().toLowerCase() === "1",
+  };
+}
+
+function maskUser(user: string): string {
+  if (user.length <= 4) return "***";
+  return `${user.slice(0, 2)}***${user.slice(-2)}`;
+}
+
+async function firstVisibleLocator(
+  page: LoginPage,
+  selectors: string[],
+  timeoutMs: number
+): Promise<{ selector: string; locator: LoginLocator } | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const sel of selectors) {
+      try {
+        const locator = page.locator(sel).first();
+        if (await locator.isVisible()) return { selector: sel, locator };
+      } catch {
+        /* selector may not resolve yet — try the next one */
+      }
+    }
+    await page.waitForTimeout(200);
+  }
+  return null;
+}
+
+type LoginPageEval = LoginPage & {
+  evaluate: <R>(fn: () => R | Promise<R>) => Promise<R>;
+};
+
+/**
+ * When the login form is not visible on the current page, try to find a
+ * navigation entry that leads to it ("Sign in" / "Log in" / "Zaloguj" and
+ * friends across <a>/<button>/[role=button]/[role=link]). We avoid matching
+ * "Sign up" / "Register" / "Zarejestruj".
+ * The match is done inside the page via evaluate(); we tag the winning node
+ * with a unique attribute and then click it through a regular locator — this
+ * keeps interactions synchronized with Stagehand's CDP layer.
+ */
+async function findAndClickLoginEntry(
+  page: LoginPage,
+  timeoutMs: number
+): Promise<string | null> {
+  try {
+    const tag = await (page as LoginPageEval).evaluate<string>(() => {
+      const POSITIVE = [
+        "sign in",
+        "log in",
+        "login",
+        "signin",
+        "zaloguj",
+        "logowanie",
+      ];
+      const NEGATIVE = [
+        "sign up",
+        "signup",
+        "register",
+        "zarejestruj",
+        "create account",
+        "załóż konto",
+        "zaloz konto",
+      ];
+      const candidates = Array.from(
+        document.querySelectorAll(
+          "a, button, [role='button'], [role='link']"
+        )
+      );
+      for (const el of candidates) {
+        const rect = (el as HTMLElement).getBoundingClientRect?.();
+        if (!rect || rect.width < 1 || rect.height < 1) continue;
+        const text = (el.textContent || "").trim().toLowerCase();
+        const aria = (
+          (el as HTMLElement).getAttribute("aria-label") || ""
+        ).toLowerCase();
+        const href = ((el as HTMLAnchorElement).href || "").toLowerCase();
+        const hay = `${text} ${aria} ${href}`;
+        if (NEGATIVE.some((n) => hay.includes(n))) continue;
+        if (!POSITIVE.some((p) => hay.includes(p))) continue;
+        const uid = `pr-agent-login-${Math.random().toString(36).slice(2, 10)}`;
+        el.setAttribute("data-pr-agent-login-entry", uid);
+        return uid;
+      }
+      return "";
+    });
+    if (!tag) return null;
+    const sel = `[data-pr-agent-login-entry='${tag}']`;
+    const loc = page.locator(sel).first();
+    if (!(await loc.isVisible())) return null;
+    console.log(`Login: clicking entry link matched by text/aria/href (${sel})`);
+    await loc.click();
+    try {
+      await page.waitForLoadState("networkidle", timeoutMs);
+    } catch {
+      /* non-fatal */
+    }
+    return sel;
+  } catch {
+    return null;
+  }
+}
+
+async function performLogin(
+  page: LoginPage,
+  cfg: LoginConfig
+): Promise<{ ok: boolean; reason: string }> {
+  console.log(
+    `Login: attempting as ${maskUser(cfg.user)} (password redacted)` +
+      (cfg.loginUrl ? ` via ${cfg.loginUrl}` : " (auto-detect on current page)")
+  );
+
+  if (cfg.loginUrl) {
+    const target = /^https?:\/\//i.test(cfg.loginUrl)
+      ? cfg.loginUrl
+      : `${BASE_URL}${cfg.loginUrl.startsWith("/") ? "" : "/"}${cfg.loginUrl}`;
+    try {
+      await page.goto(target, { waitUntil: "domcontentloaded", timeoutMs: 30_000 });
+    } catch (e) {
+      return { ok: false, reason: `goto(${target}) failed: ${errMsg(e)}` };
+    }
+    try {
+      await page.waitForLoadState("networkidle", 5_000);
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  const userSelectors = cfg.userSelector
+    ? [cfg.userSelector]
+    : DEFAULT_USER_SELECTORS;
+  const passwordSelectors = cfg.passwordSelector
+    ? [cfg.passwordSelector]
+    : DEFAULT_PASSWORD_SELECTORS;
+  const submitSelectors = cfg.submitSelector
+    ? [cfg.submitSelector]
+    : DEFAULT_SUBMIT_SELECTORS;
+
+  // Fast first pass: maybe the form is already on screen (explicit login URL
+  // or landing page is a login page). Keep it short so that when there is no
+  // form, we fail over to clicking a nav entry quickly.
+  const fastDetectMs = Math.min(2_000, cfg.timeoutMs);
+  let userField = await firstVisibleLocator(page, userSelectors, fastDetectMs);
+  let passField = await firstVisibleLocator(
+    page,
+    passwordSelectors,
+    fastDetectMs
+  );
+
+  // If the form is not here and the user did not pin a login URL, try to find
+  // a nav entry like "Sign in" / "Zaloguj" and click it, then look again.
+  if ((!userField || !passField) && !cfg.loginUrl) {
+    const clicked = await findAndClickLoginEntry(page, cfg.timeoutMs);
+    if (clicked) {
+      userField = await firstVisibleLocator(page, userSelectors, cfg.timeoutMs);
+      passField = await firstVisibleLocator(
+        page,
+        passwordSelectors,
+        cfg.timeoutMs
+      );
+    }
+  }
+
+  if (!userField || !passField) {
+    return {
+      ok: false,
+      reason:
+        `login form not found (user=${Boolean(userField)}, password=${Boolean(
+          passField
+        )}). ` +
+        "Set PR_AGENT_LOGIN_URL and/or *_SELECTOR env vars to override defaults.",
+    };
+  }
+
+  console.log(
+    `Login: user field "${userField.selector}", password field "${passField.selector}"`
+  );
+
+  try {
+    await userField.locator.fill(cfg.user);
+    await passField.locator.fill(cfg.password);
+  } catch (e) {
+    return { ok: false, reason: `fill failed: ${errMsg(e)}` };
+  }
+
+  const submit = await firstVisibleLocator(page, submitSelectors, 2_000);
+  try {
+    if (submit) {
+      console.log(`Login: clicking submit "${submit.selector}"`);
+      await submit.locator.click();
+    } else {
+      console.log(
+        "Login: no submit button matched; pressing Enter on password field"
+      );
+      await page.keyPress("Enter");
+    }
+  } catch (e) {
+    return { ok: false, reason: `submit failed: ${errMsg(e)}` };
+  }
+
+  try {
+    await page.waitForLoadState("networkidle", cfg.timeoutMs);
+  } catch {
+    /* non-fatal */
+  }
+
+  if (cfg.successUrlIncludes) {
+    const deadline = Date.now() + cfg.timeoutMs;
+    while (Date.now() < deadline) {
+      if (page.url().includes(cfg.successUrlIncludes)) break;
+      await page.waitForTimeout(200);
+    }
+    if (!page.url().includes(cfg.successUrlIncludes)) {
+      return {
+        ok: false,
+        reason: `URL did not include "${cfg.successUrlIncludes}" (got "${page.url()}").`,
+      };
+    }
+  }
+
+  if (cfg.successSelector) {
+    try {
+      await page.waitForSelector(cfg.successSelector, {
+        state: "visible",
+        timeout: cfg.timeoutMs,
+      });
+    } catch {
+      return {
+        ok: false,
+        reason: `success selector "${cfg.successSelector}" not visible within ${cfg.timeoutMs}ms.`,
+      };
+    }
+  }
+
+  if (!cfg.successUrlIncludes && !cfg.successSelector) {
+    const stillOnLogin = await firstVisibleLocator(page, passwordSelectors, 500);
+    if (stillOnLogin) {
+      return {
+        ok: false,
+        reason:
+          "password field still visible after submit — credentials may be wrong or captcha/MFA is required.",
+      };
+    }
+  }
+
+  console.log(`Login: ok (url=${page.url()})`);
+  return { ok: true, reason: "" };
+}
+
+function errMsg(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
+const AUTH_SESSION_CONTEXT = [
+  "## Session context",
+  "",
+  "A test user is **already logged in** (credentials handled outside the LLM — never request them).",
+  "Do NOT attempt to log in, sign up, or log out. Do not report the absence of a login form as a bug.",
+  "If a login page suddenly appears (session expiry, redirect), treat it as an **infrastructure issue** in `notes` and stop navigating; do not type any credentials.",
+].join("\n");
+
 function buildActInstruction(
   prCtxBlock: string,
   qaPrompt: string,
@@ -1707,7 +2058,7 @@ async function main() {
   globalStagehand = stagehand;
 
   try {
-    const qaPrompt = loadQaPrompt();
+    const initialQaPrompt = loadQaPrompt();
     await stagehand.init();
     const page = stagehand.context.pages()[0];
     if (!page) {
@@ -1724,6 +2075,34 @@ async function main() {
       /* non-fatal — SPA often stays busy briefly */
     }
     console.log(`Loaded page: ${page.url()}`);
+
+    let loggedIn = false;
+    const loginCfg = readLoginConfig();
+    if (loginCfg) {
+      const loginPage = page as unknown as LoginPage;
+      const result = await performLogin(loginPage, loginCfg);
+      if (!result.ok) {
+        if (loginCfg.strict) {
+          throw new Error(`PR_AGENT login failed (strict): ${result.reason}`);
+        }
+        console.warn(`Login skipped/failed (non-strict): ${result.reason}`);
+      } else {
+        loggedIn = true;
+        try {
+          await page.goto(`${BASE_URL}/`, {
+            waitUntil: "domcontentloaded",
+            timeoutMs: 30_000,
+          });
+          await page.waitForLoadState("networkidle", 5_000);
+        } catch {
+          /* non-fatal */
+        }
+      }
+    }
+
+    const qaPrompt = loggedIn
+      ? `${AUTH_SESSION_CONTEXT}\n\n${initialQaPrompt}`
+      : initialQaPrompt;
 
     const prCtx = loadPrContext();
     const prCtxBlock = formatPrContextForPrompt(prCtx);

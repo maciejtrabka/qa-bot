@@ -43,6 +43,43 @@ Jeśli model ustawi `qaPassed: false` (albo wystąpi błąd), job **fail** → m
 
 **PR z forka** zwykle **nie** dostaje sekretów — MVP zakłada PR-y **z tego samego repozytorium**.
 
+### Opcjonalne logowanie (obszar zmiany za ekranem logowania)
+
+Jeśli obszar zmiany z PR jest dostępny **dopiero po zalogowaniu**, ustaw dwa sekrety — workflow przekaże je do agenta, a ten wypełni formularz logowania **przed** pętlą LLM przez Stagehand/CDP. **Hasło nie trafia do prompta ani do logów**: fill idzie po `page.locator(...).fill(password)` z poziomu Chromium. Do prompta agent dokleja tylko krótki blok „Session context” z informacją, że użytkownik jest zalogowany — dzięki temu LLM nie próbuje się sam logować/wylogowywać.
+
+Autodetect na stronie startowej (działa bez żadnej dodatkowej konfiguracji):
+
+1. Jeśli na `BASE_URL/` widoczne jest **pole hasła** (`input[type=password]`, `[data-testid=login-password]`, itp.) — agent od razu wypełnia i klika submit.
+2. Jeśli formularza nie ma, ale jest widoczny **przycisk/link logowania** (a/button/[role=button]/[role=link], którego tekst/aria/href pasuje do `sign in` / `log in` / `login` / `signin` / `zaloguj` / `logowanie`, z wykluczeniem `sign up` / `register` / `zarejestruj` / `create account`) — agent klika go, czeka na widoczny formularz i wtedy wypełnia.
+3. Jeśli ani formularza, ani wejścia nie ma — logowanie jest **pomijane** (warning w logu). Domyślnie bramka idzie dalej; `PR_AGENT_LOGIN_STRICT=1` zamienia ten przypadek w twardy fail. Dzięki temu PR dotykające publicznej części aplikacji nie wymagają żadnej ręcznej akcji — agent po prostu nie loguje się, jeśli nie musi.
+
+Najprostsza konfiguracja (wystarczy dla aplikacji z typowym `input[type=email]` / `input[type=password]` / `button[type=submit]`):
+
+| Nazwa | Gdzie | Opis |
+| ----- | ----- | ----- |
+| `PR_AGENT_LOGIN_USER` | **Secret** | Login/email testowego użytkownika (rekomendacja: konto dedykowane dla QA). |
+| `PR_AGENT_LOGIN_PASSWORD` | **Secret** | Hasło tego użytkownika. |
+
+Opcjonalne uszczegółowienia (Variables, niesekretne — selektory/URL bezpiecznie trzymać jawnie):
+
+| Nazwa | Gdzie | Opis |
+| ----- | ----- | ----- |
+| `PR_AGENT_LOGIN_URL` | Variable | URL (absolutny) lub ścieżka względem `BASE_URL` do strony logowania (np. `/login`). Gdy brak — agent najpierw szuka formularza na stronie startowej, a jeśli go nie widzi, **próbuje kliknąć link/przycisk „Sign in” / „Log in” / „Zaloguj” / „Logowanie”** (po tekście, `aria-label` lub `href`; pomijając „Sign up”/„Register”/„Zarejestruj”). |
+| `PR_AGENT_LOGIN_USER_SELECTOR` | Variable | Nadpisanie selektora pola loginu. Domyślnie próbowane są m.in. `[data-testid=login-email]`, `input[type=email]`, `input[name=email]`, `input[name=username]`. |
+| `PR_AGENT_LOGIN_PASSWORD_SELECTOR` | Variable | Nadpisanie selektora pola hasła. Domyślnie m.in. `[data-testid=login-password]`, `input[type=password]`. |
+| `PR_AGENT_LOGIN_SUBMIT_SELECTOR` | Variable | Nadpisanie selektora przycisku submit. Domyślnie `button[type=submit]`, `[data-testid=login-submit]`. Jeśli nic nie pasuje — wciskany jest **Enter**. |
+| `PR_AGENT_LOGIN_SUCCESS_SELECTOR` | Variable | CSS, który ma być widoczny po zalogowaniu (np. `[data-testid=user-menu]`). Gdy ustawiony — twardo sprawdzany. |
+| `PR_AGENT_LOGIN_SUCCESS_URL_INCLUDES` | Variable | Fragment URL, który ma pojawić się po zalogowaniu (np. `/app`). |
+| `PR_AGENT_LOGIN_STRICT` | Variable | `1` — jeśli logowanie się nie uda, job od razu **fail**. Domyślnie `0` (ostrzeżenie + kontynuacja; bramka może i tak failować później, bo agent nie dotrze do treści). |
+| `PR_AGENT_LOGIN_TIMEOUT_MS` | Variable | Maks. czekanie na formularz i na sukces (domyślnie `8000`). |
+
+Uwagi:
+
+- **2FA / captcha** nie są wspierane — potrzebujesz konta bez drugiego składnika (typowo osobny technical user w środowisku testowym).
+- Po **udanym** logowaniu agent wraca do `BASE_URL/`, więc reszta flow startuje z głównego ekranu.
+- **Nie** wpisuj danych logowania w `PR_AGENT_QA_PROMPT` ani w plik prompta — prompt idzie do OpenRoutera i do `pr-agent.log`. Credentiale trzymaj **wyłącznie** w Secrets.
+- Screenshot/artefakt: zrzuty (`pr-agent-screenshot-*.png`) powstają **po** zalogowaniu, więc mogą zawierać dane użytkownika. Używaj konta testowego bez wrażliwych danych.
+
 ## Blokada merge (wymagany status check)
 
 1. Repo → **Settings** → **Branches** → **Branch protection rule** dla `main`.

@@ -112,6 +112,19 @@ jobs:
           # Puste = użyj pliku PR_AGENT_PROMPT_FILE. Możesz wkleić prompt w Repo → Settings → Variables → PR_AGENT_QA_PROMPT
           PR_AGENT_PROMPT: ${{ vars.PR_AGENT_QA_PROMPT }}
           PR_AGENT_PROMPT_FILE: ${{ github.event_name == 'workflow_dispatch' && inputs.prompt_file || 'pr-agent-qa-prompt.md' }}
+          # Opcjonalne logowanie: jeśli oba sekrety są ustawione, agent zaloguje się przed QA
+          # przez Stagehand/CDP (hasło nie trafia do LLM ani do logów). Same selektory i URL
+          # mogą być Variables (niesekretne) — są bezpieczne do trzymania jawnie.
+          PR_AGENT_LOGIN_USER: ${{ secrets.PR_AGENT_LOGIN_USER }}
+          PR_AGENT_LOGIN_PASSWORD: ${{ secrets.PR_AGENT_LOGIN_PASSWORD }}
+          PR_AGENT_LOGIN_URL: ${{ vars.PR_AGENT_LOGIN_URL }}
+          PR_AGENT_LOGIN_USER_SELECTOR: ${{ vars.PR_AGENT_LOGIN_USER_SELECTOR }}
+          PR_AGENT_LOGIN_PASSWORD_SELECTOR: ${{ vars.PR_AGENT_LOGIN_PASSWORD_SELECTOR }}
+          PR_AGENT_LOGIN_SUBMIT_SELECTOR: ${{ vars.PR_AGENT_LOGIN_SUBMIT_SELECTOR }}
+          PR_AGENT_LOGIN_SUCCESS_SELECTOR: ${{ vars.PR_AGENT_LOGIN_SUCCESS_SELECTOR }}
+          PR_AGENT_LOGIN_SUCCESS_URL_INCLUDES: ${{ vars.PR_AGENT_LOGIN_SUCCESS_URL_INCLUDES }}
+          PR_AGENT_LOGIN_STRICT: ${{ vars.PR_AGENT_LOGIN_STRICT }}
+          PR_AGENT_LOGIN_TIMEOUT_MS: ${{ vars.PR_AGENT_LOGIN_TIMEOUT_MS }}
         run: |
           set -euo pipefail
           npm run agent:pr-browser 2>&1 | tee pr-agent.log
